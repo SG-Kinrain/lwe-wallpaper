@@ -6,8 +6,6 @@ import St from 'gi://St';
 import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-// Reparenting the window actor into the background group crashes mutter
-// (pixman: invalid rectangle), so the renderer output is cloned instead.
 export class BackgroundCloner {
     constructor(getSourceActor, logger) {
         this._getSourceActor = getSourceActor;

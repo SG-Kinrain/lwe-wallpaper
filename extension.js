@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// gjs caches modules by URI, so the implementation is imported with a fresh
-// timestamp on every enable to make hot-reloading work without a logout.
-
 import GLib from 'gi://GLib';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';

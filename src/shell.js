@@ -16,7 +16,6 @@ function call(method) {
         Gio.DBusCallFlags.NONE, -1, null, null);
 }
 
-// Restarts the extension through the extension system, same as toggling it by hand.
 export function applyExtension() {
     call('DisableExtension');
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, RESTART_DELAY_MS, () => {

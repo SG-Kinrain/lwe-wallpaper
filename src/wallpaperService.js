@@ -96,8 +96,6 @@ export class WallpaperService {
             Main.layoutManager.connect('monitors-changed', () => this._restart())]);
     }
 
-    // Only adopt windows that are already mapped: touching an unmapped window
-    // makes mutter assert on its stack position.
     _offerWindowToRenderers(win) {
         if (!win)
             return;

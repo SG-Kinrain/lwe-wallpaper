@@ -6,9 +6,6 @@ import Shell from 'gi://Shell';
 import * as Workspace from 'resource:///org/gnome/shell/ui/workspace.js';
 import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThumbnail.js';
 
-// The renderer window has to stay alive for the clone, but must not behave like
-// an application. Dash to Dock reads the app layer, so filtering window actors
-// alone is not enough.
 export class ShellOverrides {
     constructor(isRenderer, logger) {
         this._isRenderer = isRenderer;
