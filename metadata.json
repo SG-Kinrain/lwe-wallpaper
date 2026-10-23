@@ -1,8 +1,16 @@
 {
   "uuid": "wallpaperengine@waylandwe",
-  "name": "LWE Wallpaper (local)",
-  "description": "Self-written GLib.Shell integration for linux-wallpaperengine: renders a Wallpaper Engine scene as a real background layer.",
-  "shell-version": ["48"],
-  "session-modes": ["user"],
-  "version": 1
+  "name": "LWE Wallpaper",
+  "description": "Animated wallpapers for GNOME Shell using linux-wallpaperengine. Renders one engine instance per monitor and clones its output into GNOME's own background layer.",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48"
+  ],
+  "session-modes": [
+    "user"
+  ],
+  "version": 2,
+  "gettext-domain": "lwe-wallpaper"
 }

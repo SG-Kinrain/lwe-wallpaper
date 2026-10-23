@@ -1,279 +1,214 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 kinrain and contributors
-//
-// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
-// 完整许可文本见仓库根目录 LICENSE。
-//
-// LWE Wallpaper — 扩展配置面板（GNOME「扩展」应用 → LWE Wallpaper → 齿轮）
-// 直接编辑 ~/.config/lwe-wallpaper/config.json，保存后自动重启渲染器。
 
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
-import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
+import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-const CONFIG_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'lwe-wallpaper', 'config.json']);
-const WORKSHOP_DEFAULT = '/mnt/windows/Program Files (x86)/Steam/steamapps/workshop/content/431960';
-const UUID = 'wallpaperengine@waylandwe';
+import {
+    CONFIG_PATH, DEFAULT_CONFIG, SCALING_MODES,
+    isEngineAvailable, loadConfig, saveConfig,
+} from './src/config.js';
+import {sceneTitle, listScenes} from './src/scenes.js';
+import {applyExtension} from './src/shell.js';
 
-const DEFAULTS = {
-    engine: GLib.build_filenamev([GLib.get_home_dir(), '.local/bin/linux-wallpaperengine']),
-    workshop: WORKSHOP_DEFAULT,
-    scene: '',
-    assets: '/mnt/windows/Program Files (x86)/Steam/steamapps/common/wallpaper_engine/assets',
-    fps: 60,
-    scaling: 'fill',
-    extraArgs: [],
-    monitors: [],
-    perMonitor: {},
-    keepAtBottom: true,
-    windowGeometry: null,
-};
+export default class LwePrefs extends ExtensionPreferences {
+    fillPreferencesWindow(window) {
+        const config = loadConfig();
+        const scenes = listScenes(config.workshop);
+        const monitorCount = Math.max(1, Gdk.Display.get_default()?.get_n_monitors() ?? 2);
 
-function loadConfig() {
-    const cfg = {...DEFAULTS};
-    try {
-        const [ok, bytes] = GLib.file_get_contents(CONFIG_PATH);
-        if (ok)
-            Object.assign(cfg, JSON.parse(new TextDecoder().decode(bytes)));
-    } catch (e) {
-        logError(e, 'lwe prefs: 读取配置失败');
-    }
-    return cfg;
-}
-
-function saveConfig(cfg) {
-    const dir = GLib.path_get_dirname(CONFIG_PATH);
-    GLib.mkdir_with_parents(dir, 0o755);
-    GLib.file_set_contents(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n');
-}
-
-function sceneTitle(path) {
-    try {
-        const [ok, bytes] = GLib.file_get_contents(GLib.build_filenamev([path, 'project.json']));
-        if (!ok)
-            return GLib.path_get_basename(path);
-        const d = JSON.parse(new TextDecoder().decode(bytes));
-        return d.title ?? GLib.path_get_basename(path);
-    } catch {
-        return GLib.path_get_basename(path);
-    }
-}
-
-function listScenes(workshop) {
-    const out = [];
-    try {
-        const dir = Gio.File.new_for_path(workshop);
-        const e = dir.enumerate_children('standard::name,standard::type',
-            Gio.FileQueryInfoFlags.NONE, null);
-        let info;
-        while ((info = e.next_file(null))) {
-            if (info.get_file_type() !== Gio.FileType.DIRECTORY)
-                continue;
-            const id = info.get_name();
-            const path = GLib.build_filenamev([workshop, id]);
-            if (GLib.file_test(GLib.build_filenamev([path, 'project.json']), GLib.FileTest.EXISTS))
-                out.push({id, path, title: sceneTitle(path)});
-        }
-    } catch (e) {
-        logError(e, 'lwe prefs: 扫描工坊失败');
-    }
-    return out.sort((a, b) => a.title.localeCompare(b.title));
-}
-
-function monitorCount() {
-    try {
-        const display = Gdk.Display.get_default();
-        return display ? display.get_n_monitors() : 2;
-    } catch {
-        return 2;
-    }
-}
-
-function applySettings() {
-    // 通过 D-Bus 让 shell 重启扩展（等价于 disable → enable）
-    Gio.DBus.session.call('org.gnome.Shell.Extensions', '/org/gnome/Shell/Extensions',
-        'org.gnome.Shell.Extensions', 'DisableExtension',
-        new GLib.Variant('(s)', [UUID]), null, Gio.DBusCallFlags.NONE, -1, null, null);
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
-        Gio.DBus.session.call('org.gnome.Shell.Extensions', '/org/gnome/Shell/Extensions',
-            'org.gnome.Shell.Extensions', 'EnableExtension',
-            new GLib.Variant('(s)', [UUID]), null, Gio.DBusCallFlags.NONE, -1, null, null);
-        return GLib.SOURCE_REMOVE;
-    });
-}
-
-
-export function fillPreferencesWindow(window) {
-        const cfg = loadConfig();
-        const scenes = listScenes(cfg.workshop);
-        const nMon = Math.max(1, monitorCount());
-
-        // ---------------------------------------------------------- 常规
         const page = new Adw.PreferencesPage({
-            title: '壁纸',
+            title: _('Wallpaper'),
             icon_name: 'preferences-desktop-wallpaper-symbolic',
         });
         window.add(page);
 
-        const general = new Adw.PreferencesGroup({
-            title: '默认场景',
-            description: '所有显示器都用这个场景；下面可以给单块屏单独覆盖',
-        });
-        page.add(general);
+        this._buildEngineGroup(page, config);
+        this._buildDefaultGroup(page, config, scenes);
+        this._buildPerMonitorGroup(page, config, scenes, monitorCount);
+        this._buildActions(page, config);
+    }
 
-        // 场景下拉
-        const sceneModel = new Gtk.StringList();
-        const paths = [];
-        for (const s of scenes) {
-            sceneModel.append(`${s.title}  (${s.id})`);
-            paths.push(s.path);
+    _buildEngineGroup(page, config) {
+        const group = new Adw.PreferencesGroup({title: _('Renderer')});
+        page.add(group);
+
+        const missing = !isEngineAvailable(config.engine);
+        if (missing) {
+            const banner = new Adw.Banner({
+                title: _('linux-wallpaperengine not found — build it and set the path below'),
+                revealed: true,
+            });
+            group.add(banner);
         }
-        let curIdx = paths.indexOf(cfg.scene);
+
+        const row = new Adw.EntryRow({title: _('Executable path')});
+        row.text = config.engine ?? '';
+        row.connect('changed', () => {
+            config.engine = row.text;
+        });
+        group.add(row);
+    }
+
+    _buildDefaultGroup(page, config, scenes) {
+        const group = new Adw.PreferencesGroup({
+            title: _('Default scene'),
+            description: _('Used by every monitor unless overridden below'),
+        });
+        page.add(group);
+
+        const paths = scenes.map(scene => scene.path);
+        const model = new Gtk.StringList();
+        for (const scene of scenes)
+            model.append(`${scene.title} (${scene.id})`);
+
+        const selected = paths.indexOf(config.scene);
         const sceneRow = new Adw.ComboRow({
-            title: '场景',
-            subtitle: cfg.scene ? sceneTitle(cfg.scene) : '未选择',
-            model: sceneModel,
-            selected: curIdx >= 0 ? curIdx : Gtk.INVALID_LIST_POSITION,
+            title: _('Scene'),
+            subtitle: config.scene ? sceneTitle(config.scene) : _('Not selected'),
+            model,
+            selected: selected >= 0 ? selected : Gtk.INVALID_LIST_POSITION,
         });
         sceneRow.connect('notify::selected', () => {
-            const i = sceneRow.selected;
-            if (i >= 0 && i < paths.length) {
-                cfg.scene = paths[i];
-                sceneRow.subtitle = sceneTitle(paths[i]);
+            if (sceneRow.selected < paths.length) {
+                config.scene = paths[sceneRow.selected];
+                sceneRow.subtitle = sceneTitle(config.scene);
             }
         });
-        general.add(sceneRow);
+        group.add(sceneRow);
 
-        // 手动路径
-        const pathRow = new Adw.EntryRow({title: '或直接填场景目录 / project.json 路径'});
-        pathRow.text = cfg.scene ?? '';
+        const pathRow = new Adw.EntryRow({title: _('Or enter a scene folder path')});
+        pathRow.text = config.scene ?? '';
         pathRow.connect('changed', () => {
-            if (pathRow.text) {
-                cfg.scene = pathRow.text;
-                const i = paths.indexOf(pathRow.text);
-                if (i >= 0)
-                    sceneRow.selected = i;
-            }
+            config.scene = pathRow.text;
+            const index = paths.indexOf(config.scene);
+            if (index >= 0)
+                sceneRow.selected = index;
         });
-        general.add(pathRow);
+        group.add(pathRow);
 
-        // fps / 缩放
         const fpsRow = new Adw.SpinRow({
-            title: '帧率',
-            subtitle: '30 更省电，60 更顺滑',
-            adjustment: new Gtk.Adjustment({lower: 1, upper: 240, step_increment: 1, value: cfg.fps}),
+            title: _('Frame rate'),
+            subtitle: _('30 is lighter, 60 is smoother'),
+            adjustment: new Gtk.Adjustment({
+                lower: 1, upper: 240, step_increment: 1, value: config.fps,
+            }),
         });
         fpsRow.connect('notify::value', () => {
-            cfg.fps = fpsRow.value;
+            config.fps = fpsRow.value;
         });
-        general.add(fpsRow);
+        group.add(fpsRow);
 
         const scalingModel = new Gtk.StringList();
-        ['fill', 'fit', 'stretch'].forEach(s => scalingModel.append(s));
+        for (const mode of SCALING_MODES)
+            scalingModel.append(mode);
         const scalingRow = new Adw.ComboRow({
-            title: '缩放方式',
-            subtitle: 'fill 铺满（裁切）· fit 完整显示（留黑边）· stretch 拉伸',
+            title: _('Scaling'),
+            subtitle: _('fill crops, fit letterboxes, stretch distorts'),
             model: scalingModel,
-            selected: ['fill', 'fit', 'stretch'].indexOf(cfg.scaling),
+            selected: SCALING_MODES.indexOf(config.scaling),
         });
         scalingRow.connect('notify::selected', () => {
-            cfg.scaling = ['fill', 'fit', 'stretch'][scalingRow.selected] ?? 'fill';
+            config.scaling = SCALING_MODES[scalingRow.selected] ?? DEFAULT_CONFIG.scaling;
         });
-        general.add(scalingRow);
+        group.add(scalingRow);
 
         const keepRow = new Adw.SwitchRow({
-            title: '把渲染窗口压在窗口栈底层',
-            subtitle: '关闭后渲染窗口可能盖住应用窗口（一般不关）',
-            active: cfg.keepAtBottom !== false,
+            title: _('Keep renderer below other windows'),
+            active: config.keepAtBottom !== false,
         });
         keepRow.connect('notify::active', () => {
-            cfg.keepAtBottom = keepRow.active;
+            config.keepAtBottom = keepRow.active;
         });
-        general.add(keepRow);
+        group.add(keepRow);
+    }
 
-        // ---------------------------------------------------------- 每屏
-        const perPage = new Adw.PreferencesGroup({
-            title: '按显示器单独设置',
-            description: '留空表示跟随上面的默认场景',
+    _buildPerMonitorGroup(page, config, scenes, monitorCount) {
+        const group = new Adw.PreferencesGroup({
+            title: _('Per-monitor overrides'),
+            description: _('Leave empty to follow the default scene'),
         });
-        page.add(perPage);
+        page.add(group);
 
-        for (let i = 0; i < nMon; i++) {
-            const key = String(i);
-            const over = cfg.perMonitor?.[key] ?? {};
+        const paths = ['', ...scenes.map(scene => scene.path)];
+
+        for (let index = 0; index < monitorCount; index++) {
+            const key = String(index);
+            const override = config.perMonitor?.[key] ?? {};
 
             const row = new Adw.ExpanderRow({
-                title: `显示器 ${i}${i === 0 ? '（通常是主屏）' : ''}`,
-                subtitle: over.scene ? sceneTitle(over.scene) : '跟随默认',
+                title: `${_('Monitor')} ${index + 1}`,
+                subtitle: override.scene ? sceneTitle(override.scene) : _('Follows default'),
             });
 
-            const mModel = new Gtk.StringList();
-            mModel.append('跟随默认');
-            for (const s of scenes)
-                mModel.append(`${s.title}  (${s.id})`);
-            const mPaths = [''].concat(paths);
-            const sel = over.scene ? mPaths.indexOf(over.scene) : 0;
-            const mRow = new Adw.ComboRow({
-                title: '场景',
-                model: mModel,
-                selected: sel >= 0 ? sel : 0,
+            const model = new Gtk.StringList();
+            model.append(_('Follows default'));
+            for (const scene of scenes)
+                model.append(`${scene.title} (${scene.id})`);
+
+            const current = override.scene ? paths.indexOf(override.scene) : 0;
+            const sceneRow = new Adw.ComboRow({
+                title: _('Scene'),
+                model,
+                selected: current >= 0 ? current : 0,
             });
-            mRow.connect('notify::selected', () => {
-                const p = mPaths[mRow.selected] ?? '';
-                cfg.perMonitor = cfg.perMonitor ?? {};
-                cfg.perMonitor[key] = cfg.perMonitor[key] ?? {};
-                if (p)
-                    cfg.perMonitor[key].scene = p;
+            sceneRow.connect('notify::selected', () => {
+                const path = paths[sceneRow.selected] ?? '';
+                config.perMonitor[key] = config.perMonitor[key] ?? {};
+                if (path)
+                    config.perMonitor[key].scene = path;
                 else
-                    delete cfg.perMonitor[key].scene;
-                row.subtitle = p ? sceneTitle(p) : '跟随默认';
+                    delete config.perMonitor[key].scene;
+                row.subtitle = path ? sceneTitle(path) : _('Follows default');
             });
-            row.add_row(mRow);
+            row.add_row(sceneRow);
 
-            const mFps = new Adw.SpinRow({
-                title: '帧率（0 = 跟随默认）',
-                adjustment: new Gtk.Adjustment({lower: 0, upper: 240, step_increment: 1, value: over.fps ?? 0}),
+            const fpsRow = new Adw.SpinRow({
+                title: _('Frame rate (0 = follow default)'),
+                adjustment: new Gtk.Adjustment({
+                    lower: 0, upper: 240, step_increment: 1, value: override.fps ?? 0,
+                }),
             });
-            mFps.connect('notify::value', () => {
-                cfg.perMonitor = cfg.perMonitor ?? {};
-                cfg.perMonitor[key] = cfg.perMonitor[key] ?? {};
-                if (mFps.value > 0)
-                    cfg.perMonitor[key].fps = mFps.value;
+            fpsRow.connect('notify::value', () => {
+                config.perMonitor[key] = config.perMonitor[key] ?? {};
+                if (fpsRow.value > 0)
+                    config.perMonitor[key].fps = fpsRow.value;
                 else
-                    delete cfg.perMonitor[key].fps;
+                    delete config.perMonitor[key].fps;
             });
-            row.add_row(mFps);
+            row.add_row(fpsRow);
 
-            perPage.add(row);
+            group.add(row);
         }
+    }
 
-        // ---------------------------------------------------------- 保存
-        const actionGroup = new Adw.PreferencesGroup();
-        page.add(actionGroup);
+    _buildActions(page, config) {
+        const group = new Adw.PreferencesGroup();
+        page.add(group);
 
         const applyRow = new Adw.ActionRow({
-            title: '保存并应用',
-            subtitle: '写入配置并重启渲染器（无需注销）',
+            title: _('Save and apply'),
+            subtitle: _('Restarts the renderer, no logout needed'),
         });
-        const applyBtn = new Gtk.Button({
-            label: '应用',
+        const applyButton = new Gtk.Button({
+            label: _('Apply'),
             valign: Gtk.Align.CENTER,
             css_classes: ['suggested-action'],
         });
-        applyBtn.connect('clicked', () => {
-            saveConfig(cfg);
-            applySettings();
-            applyRow.subtitle = '已保存，正在重启渲染器…';
+        applyButton.connect('clicked', () => {
+            saveConfig(config);
+            applyExtension();
+            applyRow.subtitle = _('Saved, restarting renderer…');
         });
-        applyRow.add_suffix(applyBtn);
-        actionGroup.add(applyRow);
+        applyRow.add_suffix(applyButton);
+        group.add(applyRow);
 
-        const openRow = new Adw.ActionRow({
-            title: '配置文件位置',
+        group.add(new Adw.ActionRow({
+            title: _('Configuration file'),
             subtitle: CONFIG_PATH,
-        });
-        actionGroup.add(openRow);
+        }));
     }
+}

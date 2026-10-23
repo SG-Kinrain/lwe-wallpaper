@@ -1,38 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 kinrain and contributors
-//
-// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
-// 完整许可文本见仓库根目录 LICENSE。
-//
-// 单个渲染实例：启动 linux-wallpaperengine，接管它开的窗口，让它"消失"在窗口栈底层
-//
-// 关键点（每一条都是踩坑换来的）：
-//   1. 必须用 Meta.WaylandClient 启动。用 Gio.Subprocess 起的窗口 get_layer() 是 LAST(8)，
-//      mutter 不认它的归属，lower() 完全无效 → 壁纸盖在所有窗口之上。
-//   2. Wayland 下 GLFW 不能定位窗口，两个实例会全叠在 (0,0)；
-//      被遮住的那个 mutter 不绘制 → 对应显示器的克隆是空白。
-//      所以接管后必须 move_frame() 把它挪到自己那块屏。
-//   3. 不能最小化渲染窗口：源 actor 隐藏时 Clutter.Clone 不绘制，壁纸会消失。
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
-import {buildEngineArgv} from './config.js';
+import {buildEngineArgv, isEngineAvailable} from './config.js';
 
-const RENDERER_TITLE_HINT = 'wallpaperengine';
 const LOWER_RETRY_DELAYS_MS = [400, 1500];
 
 export class Renderer {
-    /**
-     * @param {object} options
-     * @param {object} options.config 该显示器的有效配置
-     * @param {number} options.monitorIndex
-     * @param {object} options.monitor {x,y,width,height}
-     * @param {object} options.logger
-     * @param {(renderer: Renderer) => void} [options.onReady] 窗口接管完成后回调
-     * @param {(renderer: Renderer) => void} [options.onLost]  窗口/进程消失时回调
-     */
     constructor({config, monitorIndex, monitor, logger, onReady = () => {}, onLost = () => {}}) {
         this._config = config;
         this._monitorIndex = monitorIndex;
@@ -46,7 +23,8 @@ export class Renderer {
         this._pid = 0;
         this._window = null;
         this._actor = null;
-        this._signals = [];
+        this._signalIds = [];
+        this._timeoutIds = [];
         this._stopped = false;
     }
 
@@ -58,41 +36,32 @@ export class Renderer {
         return this._actor;
     }
 
-    get pid() {
-        return this._pid;
-    }
-
     get isReady() {
         return this._window !== null;
     }
 
-    // ------------------------------------------------------------ 生命周期
-
     start() {
-        const argv = buildEngineArgv(this._config, this._monitor);
-        this._logger.info(`启动 monitor=${this._monitorIndex} ` +
-            `${this._monitor.width}x${this._monitor.height}@(${this._monitor.x},${this._monitor.y})`);
-
-        try {
-            this._process = this._spawnViaWaylandClient(argv);
-        } catch (e) {
-            this._logger.error(`启动失败: ${e.message ?? e}`);
+        if (!isEngineAvailable(this._config.engine)) {
+            this._logger.error(`找不到渲染器: ${this._config.engine}`);
             return false;
         }
 
-        if (!this._process) {
-            this._logger.error('启动失败：没有拿到进程句柄');
+        const argv = buildEngineArgv(this._config, this._monitor);
+        this._logger.debug(`monitor=${this._monitorIndex} 启动 ${argv[0]}`);
+
+        try {
+            this._process = this._spawn(argv);
+        } catch (e) {
+            this._logger.error(`monitor=${this._monitorIndex} 启动失败: ${e.message ?? e}`);
             return false;
         }
 
         this._pid = this._readPid(this._process);
-        this._logger.info(`monitor=${this._monitorIndex} 引擎 pid=${this._pid}`);
+        this._logger.debug(`monitor=${this._monitorIndex} 引擎 pid=${this._pid}`);
 
         this._process.wait_async(null, () => {
-            if (this._stopped)
-                return;
-            this._logger.warn(`monitor=${this._monitorIndex} 引擎进程退出`);
-            this._notifyLost();
+            if (!this._stopped)
+                this._notifyLost();
         });
 
         return true;
@@ -100,14 +69,19 @@ export class Renderer {
 
     stop() {
         this._stopped = true;
-        for (const [obj, signalId] of this._signals) {
+
+        for (const [obj, id] of this._signalIds) {
             try {
-                obj.disconnect(signalId);
+                obj.disconnect(id);
             } catch {
                 // 对象已销毁
             }
         }
-        this._signals = [];
+        this._signalIds = [];
+
+        for (const id of this._timeoutIds)
+            GLib.source_remove(id);
+        this._timeoutIds = [];
 
         if (this._process) {
             try {
@@ -116,6 +90,7 @@ export class Renderer {
                 this._logger.warn(`结束进程失败: ${e.message ?? e}`);
             }
         }
+
         this._process = null;
         this._client = null;
         this._window = null;
@@ -123,9 +98,14 @@ export class Renderer {
         this._pid = 0;
     }
 
-    // ------------------------------------------------------------ 窗口接管
+    owns(win) {
+        if (!win)
+            return false;
+        if (this._window === win)
+            return true;
+        return this.matches(win);
+    }
 
-    /** 这个窗口是不是本实例的渲染窗口 */
     matches(win) {
         if (!win || this.isReady)
             return false;
@@ -135,7 +115,7 @@ export class Renderer {
                 if (this._client.owns_window(win))
                     return true;
             } catch {
-                // owns_window 在部分版本上会抛错，退回下面的启发式
+                // owns_window 在部分版本会抛错，退回下面的判断
             }
         }
 
@@ -143,63 +123,41 @@ export class Renderer {
             return true;
 
         const title = (win.get_title?.() ?? '').toLowerCase();
-        return title.includes(RENDERER_TITLE_HINT);
+        return title.includes('wallpaperengine');
     }
 
-    /** 该窗口是否属于本实例（含已接管的窗口，override 过滤要用） */
-    owns(win) {
-        if (!win)
-            return false;
-        if (this._window === win)
-            return true;
-        return this.matches(win);
-    }
-
-    /**
-     * 接管窗口：定位到自己那块屏、压到窗口栈底层，并通知调用方可以挂克隆了。
-     * @param {Meta.Window} win
-     * @param {Clutter.Actor} actor
-     */
+    // 窗口尚未配置完成时（layer 不是 NORMAL）不能动它，否则会触发 mutter 断言。
     adopt(win, actor) {
         if (this.isReady)
             return false;
 
-        // 窗口还没配置完时（layer 为 LAST/DOCK）对它 lower/move 会踩 mutter 断言，
-        // 必须等它落到 NORMAL 层再接管；service 的轮询会重试。
         const layer = win.get_layer?.();
         if (layer !== undefined && layer !== Meta.StackLayer.NORMAL) {
-            this._logger.info(`monitor=${this._monitorIndex} 窗口尚未就绪(layer=${layer})，稍后重试`);
+            this._logger.debug(`monitor=${this._monitorIndex} 窗口尚未就绪(layer=${layer})`);
             return false;
         }
 
         this._window = win;
         this._actor = actor;
 
-        this._logger.info(`接管 monitor=${this._monitorIndex} ` +
-            `layer=${win.get_layer?.()} fullscreen=${win.is_fullscreen?.() ?? false} ` +
-            `title=${win.get_title?.() ?? ''}`);
-
-        // fullscreen 属于全屏层，lower() 对它无效
         if (win.is_fullscreen?.())
             this._unfullscreen(win);
 
         this._moveToMonitor(win);
         this._keepAtBottom(win);
 
-        this._signals.push([actor, actor.connect('destroy', () => {
-            this._logger.warn(`monitor=${this._monitorIndex} 渲染 actor 销毁`);
+        this._signalIds.push([actor, actor.connect('destroy', () => {
             this._window = null;
             this._actor = null;
             this._notifyLost();
         })]);
 
+        this._logger.debug(`monitor=${this._monitorIndex} 已接管窗口`);
         this._onReady(this);
         return true;
     }
 
-    // ------------------------------------------------------------ 内部
-
-    _spawnViaWaylandClient(argv) {
+    _spawn(argv) {
         if (!Meta.WaylandClient)
             throw new Error('Meta.WaylandClient 不可用（需要 GNOME 45+）');
 
@@ -215,8 +173,8 @@ export class Renderer {
 
     _readPid(process) {
         try {
-            const ident = process.get_identifier();
-            return ident ? parseInt(ident, 10) : 0;
+            const identifier = process.get_identifier();
+            return identifier ? parseInt(identifier, 10) : 0;
         } catch {
             return 0;
         }
@@ -225,20 +183,18 @@ export class Renderer {
     _unfullscreen(win) {
         try {
             win.unmake_fullscreen();
-            this._logger.info(`monitor=${this._monitorIndex} 已取消 fullscreen`);
         } catch (e) {
             this._logger.warn(`取消 fullscreen 失败: ${e.message ?? e}`);
         }
     }
 
+    // GLFW 在 Wayland 下无法定位窗口，多个实例会全叠在 (0,0)，
+    // 被遮住的窗口 mutter 不绘制，对应的克隆会是空白。
     _moveToMonitor(win) {
         try {
             win.move_frame(true, this._monitor.x, this._monitor.y);
-            const rect = win.get_frame_rect();
-            this._logger.info(`monitor=${this._monitorIndex} 定位 → ` +
-                `(${rect.x},${rect.y}) ${rect.width}x${rect.height}`);
         } catch (e) {
-            this._logger.warn(`定位失败: ${e.message ?? e}`);
+            this._logger.warn(`定位窗口失败: ${e.message ?? e}`);
         }
     }
 
@@ -247,17 +203,16 @@ export class Renderer {
             return;
 
         this._lower(win);
+        this._signalIds.push([win, win.connect_after('raised', () => this._lower(win))]);
 
-        // 用户点到桌面时窗口可能被抬起
-        this._signals.push([win, win.connect_after('raised', () => this._lower(win))]);
-
-        // 刚映射时 mutter 可能还没算完栈，有限次补压（不是定时器循环）
         for (const delay of LOWER_RETRY_DELAYS_MS) {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+            const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._timeoutIds = this._timeoutIds.filter(sourceId => sourceId !== id);
                 if (!this._stopped)
                     this._lower(win);
                 return GLib.SOURCE_REMOVE;
             });
+            this._timeoutIds.push(id);
         }
     }
 
@@ -267,13 +222,12 @@ export class Renderer {
                 win.unmake_fullscreen();
             win.lower();
         } catch (e) {
-            this._logger.warn(`lower 失败: ${e.message ?? e}`);
+            this._logger.debug(`lower 失败: ${e.message ?? e}`);
         }
     }
 
     _notifyLost() {
-        if (this._stopped)
-            return;
-        this._onLost(this);
+        if (!this._stopped)
+            this._onLost(this);
     }
 }
