@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 kinrain and contributors
+//
+// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
+// 完整许可文本见仓库根目录 LICENSE。
+//
 // 配置：默认值、读写、校验、命令行参数构建
 //
 // 配置来源是单个 JSON 文件（~/.config/lwe-wallpaper/config.json），

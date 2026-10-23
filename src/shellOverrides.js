@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 kinrain and contributors
+//
+// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
+// 完整许可文本见仓库根目录 LICENSE。
+//
 // 把渲染器窗口从 GNOME Shell 的各种列表里摘掉
 //
 // 渲染窗口必须真实存在（克隆需要它的画面），但不能表现成一个应用：

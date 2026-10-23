@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 kinrain and contributors
+//
+// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
+// 完整许可文本见仓库根目录 LICENSE。
+//
 // 编排层：把配置、渲染器、背景克隆、外壳覆盖组装起来并管理生命周期
 //
 // 这里只做"接线"，不碰任何 mutter 细节：

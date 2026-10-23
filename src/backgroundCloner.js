@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 kinrain and contributors
+//
+// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
+// 完整许可文本见仓库根目录 LICENSE。
+//
 // 背景克隆：把渲染器窗口的画面画进 GNOME 自己的壁纸层
 //
 // 做法是注入 BackgroundManager._createBackgroundActor，在 GNOME 建好的背景 actor

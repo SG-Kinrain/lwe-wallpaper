@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 kinrain and contributors
+//
+// 本文件是 LWE Wallpaper 的一部分，按 GNU GPL v3 或更新版本发布，不提供任何担保。
+// 完整许可文本见仓库根目录 LICENSE。
+//
 // 单个渲染实例：启动 linux-wallpaperengine，接管它开的窗口，让它"消失"在窗口栈底层
 //
 // 关键点（每一条都是踩坑换来的）：
