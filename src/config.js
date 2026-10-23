@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG = {
     scene: '',
     fps: 60,
     scaling: 'fill',
-    extraArgs: [],
+    extraArgs: ['--no-audio-processing', '--no-fullscreen-pause'],
     monitors: [],
     perMonitor: {},
     keepAtBottom: true,
