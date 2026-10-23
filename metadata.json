@@ -1,0 +1,8 @@
+{
+  "uuid": "wallpaperengine@waylandwe",
+  "name": "LWE Wallpaper (local)",
+  "description": "Self-written GLib.Shell integration for linux-wallpaperengine: renders a Wallpaper Engine scene as a real background layer.",
+  "shell-version": ["48"],
+  "session-modes": ["user"],
+  "version": 1
+}
