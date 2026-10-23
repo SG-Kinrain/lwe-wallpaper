@@ -39,13 +39,13 @@ export default class LwePrefs extends ExtensionPreferences {
         const missing = !isEngineAvailable(config.engine);
         if (missing) {
             const banner = new Adw.Banner({
-                title: _('linux-wallpaperengine not found — build it and set the path below'),
+                title: _('linux-wallpaperengine not found'),
                 revealed: true,
             });
             group.add(banner);
         }
 
-        const row = new Adw.EntryRow({title: _('Executable path')});
+        const row = new Adw.EntryRow({title: _('Executable')});
         row.text = config.engine ?? '';
         row.connect('changed', () => {
             config.engine = row.text;
@@ -54,10 +54,7 @@ export default class LwePrefs extends ExtensionPreferences {
     }
 
     _buildDefaultGroup(page, config, scenes) {
-        const group = new Adw.PreferencesGroup({
-            title: _('Default scene'),
-            description: _('Used by every monitor unless overridden below'),
-        });
+        const group = new Adw.PreferencesGroup({title: _('Wallpaper')});
         page.add(group);
 
         const paths = scenes.map(scene => scene.path);
@@ -68,7 +65,7 @@ export default class LwePrefs extends ExtensionPreferences {
         const selected = paths.indexOf(config.scene);
         const sceneRow = new Adw.ComboRow({
             title: _('Scene'),
-            subtitle: config.scene ? sceneTitle(config.scene) : _('Not selected'),
+            subtitle: config.scene ? sceneTitle(config.scene) : _('None'),
             model,
             selected: selected >= 0 ? selected : Gtk.INVALID_LIST_POSITION,
         });
@@ -80,7 +77,7 @@ export default class LwePrefs extends ExtensionPreferences {
         });
         group.add(sceneRow);
 
-        const pathRow = new Adw.EntryRow({title: _('Or enter a scene folder path')});
+        const pathRow = new Adw.EntryRow({title: _('Path')});
         pathRow.text = config.scene ?? '';
         pathRow.connect('changed', () => {
             config.scene = pathRow.text;
@@ -92,7 +89,6 @@ export default class LwePrefs extends ExtensionPreferences {
 
         const fpsRow = new Adw.SpinRow({
             title: _('Frame rate'),
-            subtitle: _('30 is lighter, 60 is smoother'),
             adjustment: new Gtk.Adjustment({
                 lower: 1, upper: 240, step_increment: 1, value: config.fps,
             }),
@@ -107,7 +103,6 @@ export default class LwePrefs extends ExtensionPreferences {
             scalingModel.append(mode);
         const scalingRow = new Adw.ComboRow({
             title: _('Scaling'),
-            subtitle: _('fill crops, fit letterboxes, stretch distorts'),
             model: scalingModel,
             selected: SCALING_MODES.indexOf(config.scaling),
         });
@@ -117,7 +112,7 @@ export default class LwePrefs extends ExtensionPreferences {
         group.add(scalingRow);
 
         const keepRow = new Adw.SwitchRow({
-            title: _('Keep renderer below other windows'),
+            title: _('Below other windows'),
             active: config.keepAtBottom !== false,
         });
         keepRow.connect('notify::active', () => {
@@ -127,10 +122,7 @@ export default class LwePrefs extends ExtensionPreferences {
     }
 
     _buildPerMonitorGroup(page, config, scenes, monitorCount) {
-        const group = new Adw.PreferencesGroup({
-            title: _('Per-monitor overrides'),
-            description: _('Leave empty to follow the default scene'),
-        });
+        const group = new Adw.PreferencesGroup({title: _('Per monitor')});
         page.add(group);
 
         const paths = ['', ...scenes.map(scene => scene.path)];
@@ -141,11 +133,11 @@ export default class LwePrefs extends ExtensionPreferences {
 
             const row = new Adw.ExpanderRow({
                 title: `${_('Monitor')} ${index + 1}`,
-                subtitle: override.scene ? sceneTitle(override.scene) : _('Follows default'),
+                subtitle: override.scene ? sceneTitle(override.scene) : _('Default'),
             });
 
             const model = new Gtk.StringList();
-            model.append(_('Follows default'));
+            model.append(_('Default'));
             for (const scene of scenes)
                 model.append(`${scene.title} (${scene.id})`);
 
@@ -162,12 +154,12 @@ export default class LwePrefs extends ExtensionPreferences {
                     config.perMonitor[key].scene = path;
                 else
                     delete config.perMonitor[key].scene;
-                row.subtitle = path ? sceneTitle(path) : _('Follows default');
+                row.subtitle = path ? sceneTitle(path) : _('Default');
             });
             row.add_row(sceneRow);
 
             const fpsRow = new Adw.SpinRow({
-                title: _('Frame rate (0 = follow default)'),
+                title: _('Frame rate (0 = default)'),
                 adjustment: new Gtk.Adjustment({
                     lower: 0, upper: 240, step_increment: 1, value: override.fps ?? 0,
                 }),
@@ -189,10 +181,7 @@ export default class LwePrefs extends ExtensionPreferences {
         const group = new Adw.PreferencesGroup();
         page.add(group);
 
-        const applyRow = new Adw.ActionRow({
-            title: _('Save and apply'),
-            subtitle: _('Restarts the renderer, no logout needed'),
-        });
+        const applyRow = new Adw.ActionRow({title: _('Save and apply')});
         const applyButton = new Gtk.Button({
             label: _('Apply'),
             valign: Gtk.Align.CENTER,
@@ -201,14 +190,11 @@ export default class LwePrefs extends ExtensionPreferences {
         applyButton.connect('clicked', () => {
             saveConfig(config);
             applyExtension();
-            applyRow.subtitle = _('Saved, restarting renderer…');
+            applyRow.subtitle = _('Restarting…');
         });
         applyRow.add_suffix(applyButton);
         group.add(applyRow);
 
-        group.add(new Adw.ActionRow({
-            title: _('Configuration file'),
-            subtitle: CONFIG_PATH,
-        }));
+        group.add(new Adw.ActionRow({title: _('Config file'), subtitle: CONFIG_PATH}));
     }
 }

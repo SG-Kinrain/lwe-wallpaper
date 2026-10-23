@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lwe-wallpaper\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-24 04:40+0800\n"
+"POT-Creation-Date: 2026-10-24 04:42+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,7 +17,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: prefs-ui.js:24
+#: prefs-ui.js:24 prefs-ui.js:57
 msgid "Wallpaper"
 msgstr ""
 
@@ -26,89 +26,65 @@ msgid "Renderer"
 msgstr ""
 
 #: prefs-ui.js:42
-msgid "linux-wallpaperengine not found — build it and set the path below"
+msgid "linux-wallpaperengine not found"
 msgstr ""
 
 #: prefs-ui.js:48
-msgid "Executable path"
+msgid "Executable"
 msgstr ""
 
-#: prefs-ui.js:58
-msgid "Default scene"
-msgstr ""
-
-#: prefs-ui.js:59
-msgid "Used by every monitor unless overridden below"
-msgstr ""
-
-#: prefs-ui.js:70 prefs-ui.js:154
+#: prefs-ui.js:67 prefs-ui.js:146
 msgid "Scene"
 msgstr ""
 
-#: prefs-ui.js:71
-msgid "Not selected"
+#: prefs-ui.js:68
+msgid "None"
 msgstr ""
 
-#: prefs-ui.js:83
-msgid "Or enter a scene folder path"
+#: prefs-ui.js:80
+msgid "Path"
 msgstr ""
 
-#: prefs-ui.js:94
+#: prefs-ui.js:91
 msgid "Frame rate"
 msgstr ""
 
-#: prefs-ui.js:95
-msgid "30 is lighter, 60 is smoother"
-msgstr ""
-
-#: prefs-ui.js:109
+#: prefs-ui.js:105
 msgid "Scaling"
 msgstr ""
 
-#: prefs-ui.js:110
-msgid "fill crops, fit letterboxes, stretch distorts"
+#: prefs-ui.js:115
+msgid "Below other windows"
 msgstr ""
 
-#: prefs-ui.js:120
-msgid "Keep renderer below other windows"
+#: prefs-ui.js:125
+msgid "Per monitor"
 msgstr ""
 
-#: prefs-ui.js:131
-msgid "Per-monitor overrides"
-msgstr ""
-
-#: prefs-ui.js:132
-msgid "Leave empty to follow the default scene"
-msgstr ""
-
-#: prefs-ui.js:143
+#: prefs-ui.js:135
 msgid "Monitor"
 msgstr ""
 
-#: prefs-ui.js:144 prefs-ui.js:148 prefs-ui.js:165
-msgid "Follows default"
+#: prefs-ui.js:136 prefs-ui.js:140 prefs-ui.js:157
+msgid "Default"
 msgstr ""
 
-#: prefs-ui.js:170
-msgid "Frame rate (0 = follow default)"
+#: prefs-ui.js:162
+msgid "Frame rate (0 = default)"
 msgstr ""
 
-#: prefs-ui.js:193
+#: prefs-ui.js:184
 msgid "Save and apply"
 msgstr ""
 
-#: prefs-ui.js:194
-msgid "Restarts the renderer, no logout needed"
-msgstr ""
-
-#: prefs-ui.js:197
+#: prefs-ui.js:186
 msgid "Apply"
 msgstr ""
 
-#: prefs-ui.js:204
-msgid "Saved, restarting renderer…"
+#: prefs-ui.js:193
+msgid "Restarting…"
 msgstr ""
 
-#: prefs-ui.js:210
-msgid "Configuration file"
+#: prefs-ui.js:198
+msgid "Config file"
 msgstr ""

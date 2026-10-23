@@ -1,11 +1,10 @@
 # Chinese (Simplified) translation for lwe-wallpaper.
-# This file is distributed under the same license as the lwe-wallpaper package.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: lwe-wallpaper 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"PO-Revision-Date: 2026-10-24 04:00+0800\n"
+"PO-Revision-Date: 2026-10-24 04:20+0800\n"
 "Last-Translator: kinrain <kinrain@localhost>\n"
 "Language-Team: Chinese (Simplified)\n"
 "Language: zh_CN\n"
@@ -20,68 +19,50 @@ msgstr "壁纸"
 msgid "Renderer"
 msgstr "渲染器"
 
-msgid "linux-wallpaperengine not found — build it and set the path below"
-msgstr "找不到 linux-wallpaperengine —— 请先编译安装，然后在下方填写路径"
+msgid "linux-wallpaperengine not found"
+msgstr "未找到 linux-wallpaperengine"
 
-msgid "Executable path"
-msgstr "可执行文件路径"
-
-msgid "Default scene"
-msgstr "默认场景"
-
-msgid "Used by every monitor unless overridden below"
-msgstr "所有显示器共用，除非在下方单独指定"
+msgid "Executable"
+msgstr "程序"
 
 msgid "Scene"
 msgstr "场景"
 
-msgid "Not selected"
+msgid "None"
 msgstr "未选择"
 
-msgid "Or enter a scene folder path"
-msgstr "或直接填写场景目录路径"
+msgid "Path"
+msgstr "路径"
 
 msgid "Frame rate"
 msgstr "帧率"
 
-msgid "30 is lighter, 60 is smoother"
-msgstr "30 更省电，60 更顺滑"
-
 msgid "Scaling"
-msgstr "缩放方式"
+msgstr "缩放"
 
-msgid "fill crops, fit letterboxes, stretch distorts"
-msgstr "fill 裁切铺满 · fit 完整显示（留黑边）· stretch 拉伸"
+msgid "Below other windows"
+msgstr "置于窗口下方"
 
-msgid "Keep renderer below other windows"
-msgstr "把渲染器压在窗口栈底层"
-
-msgid "Per-monitor overrides"
-msgstr "按显示器单独设置"
-
-msgid "Leave empty to follow the default scene"
-msgstr "留空表示跟随默认场景"
+msgid "Per monitor"
+msgstr "按显示器"
 
 msgid "Monitor"
 msgstr "显示器"
 
-msgid "Follows default"
-msgstr "跟随默认"
+msgid "Default"
+msgstr "默认"
 
-msgid "Frame rate (0 = follow default)"
-msgstr "帧率（0 = 跟随默认）"
+msgid "Frame rate (0 = default)"
+msgstr "帧率（0 = 默认）"
 
 msgid "Save and apply"
 msgstr "保存并应用"
 
-msgid "Restarts the renderer, no logout needed"
-msgstr "重启渲染器，无需注销"
-
 msgid "Apply"
 msgstr "应用"
 
-msgid "Saved, restarting renderer…"
-msgstr "已保存，正在重启渲染器…"
+msgid "Restarting…"
+msgstr "重启中…"
 
-msgid "Configuration file"
+msgid "Config file"
 msgstr "配置文件"
