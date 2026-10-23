@@ -11,7 +11,6 @@ import {setDebug} from './logger.js';
 
 const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
-const STACK_CHECK_MS = 1000;
 
 export class WallpaperService {
     constructor({Renderer, ShellOverrides, BackgroundCloner, startDiagnostics, logger}) {
@@ -28,6 +27,7 @@ export class WallpaperService {
         this._signalIds = [];
         this._timeoutIds = [];
         this._diagnostics = null;
+        this._stackCheckPending = false;
         this._enabled = false;
     }
 
@@ -109,19 +109,20 @@ export class WallpaperService {
         this._signalIds.push([Main.layoutManager,
             Main.layoutManager.connect('monitors-changed', () => this._restart())]);
         this._signalIds.push([global.display,
-            global.display.connect('restacked', () => this._enforceStacking())]);
+            global.display.connect('restacked', () => this._scheduleStackCheck())]);
         this._signalIds.push([global.display,
-            global.display.connect('notify::focus-window', () => this._enforceStacking())]);
+            global.display.connect('notify::focus-window', () => this._scheduleStackCheck())]);
 
-        // Shell popups hold a grab that makes lower() a no-op, so the window can
-        // stay raised after the menu closes with no further restack to react to.
-        const watchdogId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, STACK_CHECK_MS, () => {
-            if (!this._enabled)
-                return GLib.SOURCE_REMOVE;
-            this._enforceStacking();
-            return GLib.SOURCE_CONTINUE;
-        });
-        this._timeoutIds.push(watchdogId);
+        // Panel menus grab input through pushModal/popModal; lower() is a no-op
+        // while the grab is held, so the stack has to be fixed once it is gone.
+        const service = this;
+        for (const method of ['pushModal', 'popModal']) {
+            this._injectionManager.overrideMethod(Main, method, orig => function (...args) {
+                const result = orig.apply(Main, args);
+                service._scheduleStackCheck();
+                return result;
+            });
+        }
     }
 
     _offerWindowToRenderers(win) {
@@ -158,6 +159,20 @@ export class WallpaperService {
         sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SCAN_INTERVAL_MS, () => {
             this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
             this._scanForRenderers(attempt + 1);
+            return GLib.SOURCE_REMOVE;
+        });
+        this._timeoutIds.push(sourceId);
+    }
+
+    _scheduleStackCheck() {
+        if (!this._enabled || this._stackCheckPending)
+            return;
+        this._stackCheckPending = true;
+        let sourceId = 0;
+        sourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._stackCheckPending = false;
+            this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
+            this._enforceStacking();
             return GLib.SOURCE_REMOVE;
         });
         this._timeoutIds.push(sourceId);
