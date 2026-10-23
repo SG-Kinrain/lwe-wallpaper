@@ -35,6 +35,10 @@ export class Renderer {
         return this._actor;
     }
 
+    get window() {
+        return this._window;
+    }
+
     get isReady() {
         return this._window !== null;
     }
@@ -145,7 +149,6 @@ export class Renderer {
 
         this._moveToMonitor(win);
         this._keepAtBottom(win);
-        this._markDesktop(win);
         this._watchState(win);
 
         this._signalIds.push([actor, actor.connect('destroy', () => {
@@ -179,16 +182,6 @@ export class Renderer {
             return identifier ? parseInt(identifier, 10) : 0;
         } catch {
             return 0;
-        }
-    }
-
-    // As a normal monitor-sized window it becomes the focused top window once the
-    // user closes everything, which makes the shell hide the panel and the dock.
-    _markDesktop(win) {
-        try {
-            win.set_window_type(Meta.WindowType.DESKTOP);
-        } catch (e) {
-            this._logger.warn(`set_window_type failed: ${e.message ?? e}`);
         }
     }
 

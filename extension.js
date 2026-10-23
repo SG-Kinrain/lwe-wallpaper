@@ -7,6 +7,7 @@ import {ShellOverrides} from './src/shellOverrides.js';
 import {BackgroundCloner} from './src/backgroundCloner.js';
 import {Renderer} from './src/renderer.js';
 import {WallpaperService} from './src/wallpaperService.js';
+import {startDiagnostics} from './src/diagnostics.js';
 
 export default class LweWallpaperExtension extends Extension {
     enable() {
@@ -15,6 +16,7 @@ export default class LweWallpaperExtension extends Extension {
             Renderer,
             ShellOverrides,
             BackgroundCloner,
+            startDiagnostics,
             logger,
         });
 

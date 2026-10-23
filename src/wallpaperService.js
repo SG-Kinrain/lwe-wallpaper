@@ -12,10 +12,11 @@ const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
 
 export class WallpaperService {
-    constructor({Renderer, ShellOverrides, BackgroundCloner, logger}) {
+    constructor({Renderer, ShellOverrides, BackgroundCloner, startDiagnostics, logger}) {
         this._Renderer = Renderer;
         this._ShellOverrides = ShellOverrides;
         this._BackgroundCloner = BackgroundCloner;
+        this._startDiagnostics = startDiagnostics;
         this._logger = logger;
 
         this._injectionManager = null;
@@ -24,6 +25,7 @@ export class WallpaperService {
         this._config = null;
         this._signalIds = [];
         this._timeoutIds = [];
+        this._diagnostics = null;
         this._enabled = false;
     }
 
@@ -42,6 +44,13 @@ export class WallpaperService {
         this._spawnRenderers();
         this._scanForRenderers(0);
 
+        if (this._config.debug && this._startDiagnostics) {
+            this._diagnostics = this._startDiagnostics({
+                renderers: this._renderers,
+                logger: this._logger,
+            });
+        }
+
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             if (this._enabled)
                 this._cloner?.rebuild();
@@ -51,6 +60,9 @@ export class WallpaperService {
 
     disable() {
         this._enabled = false;
+
+        this._diagnostics?.stop();
+        this._diagnostics = null;
 
         for (const [obj, id] of this._signalIds) {
             try {
