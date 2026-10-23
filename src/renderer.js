@@ -145,6 +145,8 @@ export class Renderer {
 
         this._moveToMonitor(win);
         this._keepAtBottom(win);
+        this._markDesktop(win);
+        this._watchState(win);
 
         this._signalIds.push([actor, actor.connect('destroy', () => {
             this._window = null;
@@ -177,6 +179,34 @@ export class Renderer {
             return identifier ? parseInt(identifier, 10) : 0;
         } catch {
             return 0;
+        }
+    }
+
+    // As a normal monitor-sized window it becomes the focused top window once the
+    // user closes everything, which makes the shell hide the panel and the dock.
+    _markDesktop(win) {
+        try {
+            win.set_window_type(Meta.WindowType.DESKTOP);
+        } catch (e) {
+            this._logger.warn(`set_window_type failed: ${e.message ?? e}`);
+        }
+    }
+
+    _watchState(win) {
+        for (const property of ['fullscreen', 'maximized-horizontally', 'maximized-vertically']) {
+            this._signalIds.push([win, win.connect(`notify::${property}`,
+                () => this._resetState(win))]);
+        }
+    }
+
+    _resetState(win) {
+        try {
+            if (win.is_fullscreen?.())
+                win.unmake_fullscreen();
+            if (win.is_maximized?.())
+                win.unmaximize(Meta.MaximizeFlags.BOTH);
+        } catch (e) {
+            this._logger.debug(`reset state failed: ${e.message ?? e}`);
         }
     }
 
@@ -219,8 +249,7 @@ export class Renderer {
 
     _lower(win) {
         try {
-            if (win.is_fullscreen?.())
-                win.unmake_fullscreen();
+            this._resetState(win);
             win.lower();
         } catch (e) {
             this._logger.debug(`lower failed: ${e.message ?? e}`);
