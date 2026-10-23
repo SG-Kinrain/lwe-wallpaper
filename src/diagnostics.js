@@ -57,6 +57,22 @@ function describe(renderers) {
             `,layer${win.get_layer()}`);
     }
 
+    const ours = new Set();
+    for (const renderer of renderers.values()) {
+        if (renderer.actor)
+            ours.add(renderer.actor);
+    }
+    const stack = global.get_window_actors(false)
+        .slice(-6)
+        .map(actor => {
+            const win = actor.meta_window;
+            if (!win)
+                return '?';
+            const id = win.get_app_id?.() || win.get_title?.() || '?';
+            return `${ours.has(actor) ? '*' : ''}${id}/t${win.get_window_type()}`;
+        });
+    parts.push(`stack(top6)=${stack.join(' > ')}`);
+
     const dock = findDashActor();
     parts.push(dock
         ? `dock=visible:${dock.visible},y:${Math.round(dock.y)},opacity:${dock.opacity}`
