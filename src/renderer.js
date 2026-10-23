@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -42,22 +41,22 @@ export class Renderer {
 
     start() {
         if (!isEngineAvailable(this._config.engine)) {
-            this._logger.error(`找不到渲染器: ${this._config.engine}`);
+            this._logger.error(`renderer not found: ${this._config.engine}`);
             return false;
         }
 
         const argv = buildEngineArgv(this._config, this._monitor);
-        this._logger.debug(`monitor=${this._monitorIndex} 启动 ${argv[0]}`);
+        this._logger.debug(`monitor=${this._monitorIndex} spawning ${argv[0]}`);
 
         try {
             this._process = this._spawn(argv);
         } catch (e) {
-            this._logger.error(`monitor=${this._monitorIndex} 启动失败: ${e.message ?? e}`);
+            this._logger.error(`monitor=${this._monitorIndex} spawn failed: ${e.message ?? e}`);
             return false;
         }
 
         this._pid = this._readPid(this._process);
-        this._logger.debug(`monitor=${this._monitorIndex} 引擎 pid=${this._pid}`);
+        this._logger.debug(`monitor=${this._monitorIndex} engine pid=${this._pid}`);
 
         this._process.wait_async(null, () => {
             if (!this._stopped)
@@ -74,7 +73,7 @@ export class Renderer {
             try {
                 obj.disconnect(id);
             } catch {
-                // 对象已销毁
+                // object already destroyed
             }
         }
         this._signalIds = [];
@@ -87,7 +86,7 @@ export class Renderer {
             try {
                 this._process.force_exit();
             } catch (e) {
-                this._logger.warn(`结束进程失败: ${e.message ?? e}`);
+                this._logger.warn(`kill failed: ${e.message ?? e}`);
             }
         }
 
@@ -115,7 +114,7 @@ export class Renderer {
                 if (this._client.owns_window(win))
                     return true;
             } catch {
-                // owns_window 在部分版本会抛错，退回下面的判断
+                // owns_window throws on some versions, fall through to heuristics
             }
         }
 
@@ -126,14 +125,15 @@ export class Renderer {
         return title.includes('wallpaperengine');
     }
 
-    // 窗口尚未配置完成时（layer 不是 NORMAL）不能动它，否则会触发 mutter 断言。
+    // A window that is not in the NORMAL layer yet must not be touched:
+    // lowering it triggers a mutter assertion and takes the shell down.
     adopt(win, actor) {
         if (this.isReady)
             return false;
 
         const layer = win.get_layer?.();
         if (layer !== undefined && layer !== Meta.StackLayer.NORMAL) {
-            this._logger.debug(`monitor=${this._monitorIndex} 窗口尚未就绪(layer=${layer})`);
+            this._logger.debug(`monitor=${this._monitorIndex} window not ready (layer=${layer})`);
             return false;
         }
 
@@ -152,14 +152,14 @@ export class Renderer {
             this._notifyLost();
         })]);
 
-        this._logger.debug(`monitor=${this._monitorIndex} 已接管窗口`);
+        this._logger.debug(`monitor=${this._monitorIndex} window adopted`);
         this._onReady(this);
         return true;
     }
 
     _spawn(argv) {
         if (!Meta.WaylandClient)
-            throw new Error('Meta.WaylandClient 不可用（需要 GNOME 45+）');
+            throw new Error('Meta.WaylandClient is unavailable (GNOME 45+ required)');
 
         const launcher = new Gio.SubprocessLauncher({
             flags: Gio.SubprocessFlags.STDOUT_SILENCE,
@@ -184,17 +184,17 @@ export class Renderer {
         try {
             win.unmake_fullscreen();
         } catch (e) {
-            this._logger.warn(`取消 fullscreen 失败: ${e.message ?? e}`);
+            this._logger.warn(`unmake_fullscreen failed: ${e.message ?? e}`);
         }
     }
 
-    // GLFW 在 Wayland 下无法定位窗口，多个实例会全叠在 (0,0)，
-    // 被遮住的窗口 mutter 不绘制，对应的克隆会是空白。
+    // GLFW cannot position windows on Wayland, so every instance lands on (0,0) and
+    // the occluded ones never get painted, leaving their clone blank.
     _moveToMonitor(win) {
         try {
             win.move_frame(true, this._monitor.x, this._monitor.y);
         } catch (e) {
-            this._logger.warn(`定位窗口失败: ${e.message ?? e}`);
+            this._logger.warn(`move_frame failed: ${e.message ?? e}`);
         }
     }
 
@@ -206,13 +206,14 @@ export class Renderer {
         this._signalIds.push([win, win.connect_after('raised', () => this._lower(win))]);
 
         for (const delay of LOWER_RETRY_DELAYS_MS) {
-            const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-                this._timeoutIds = this._timeoutIds.filter(sourceId => sourceId !== id);
+            let sourceId = 0;
+            sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
                 if (!this._stopped)
                     this._lower(win);
                 return GLib.SOURCE_REMOVE;
             });
-            this._timeoutIds.push(id);
+            this._timeoutIds.push(sourceId);
         }
     }
 
@@ -222,7 +223,7 @@ export class Renderer {
                 win.unmake_fullscreen();
             win.lower();
         } catch (e) {
-            this._logger.debug(`lower 失败: ${e.message ?? e}`);
+            this._logger.debug(`lower failed: ${e.message ?? e}`);
         }
     }
 

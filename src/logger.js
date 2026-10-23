@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 const PREFIX = '[lwe]';
 let debugEnabled = false;

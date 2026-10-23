@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -18,7 +17,7 @@ export function sceneTitle(path) {
                 return project.title;
         }
     } catch (e) {
-        log.debug(`读取场景标题失败: ${e.message ?? e}`);
+        log.debug(`cannot read scene title: ${e.message ?? e}`);
     }
     return GLib.path_get_basename(path);
 }
@@ -39,7 +38,7 @@ export function listScenes(workshop) {
                 scenes.push({id, path, title: sceneTitle(path)});
         }
     } catch (e) {
-        log.warn(`扫描场景目录失败: ${e.message ?? e}`);
+        log.warn(`cannot scan workshop: ${e.message ?? e}`);
     }
     return scenes.sort((a, b) => a.title.localeCompare(b.title));
 }

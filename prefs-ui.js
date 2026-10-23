@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';

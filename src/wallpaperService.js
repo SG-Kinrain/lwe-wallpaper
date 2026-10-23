@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import GLib from 'gi://GLib';
 
@@ -48,8 +47,6 @@ export class WallpaperService {
                 this._cloner?.rebuild();
             return GLib.SOURCE_REMOVE;
         });
-
-        this._logger.debug(`已启用 monitors=[${targetMonitors(this._config, Main.layoutManager.monitors.length)}]`);
     }
 
     disable() {
@@ -59,7 +56,7 @@ export class WallpaperService {
             try {
                 obj.disconnect(id);
             } catch {
-                // 对象已销毁
+                // object already destroyed
             }
         }
         this._signalIds = [];
@@ -99,7 +96,8 @@ export class WallpaperService {
             Main.layoutManager.connect('monitors-changed', () => this._restart())]);
     }
 
-    // 只在窗口 map 之后接管：未配置完成的窗口动它会触发 mutter 断言。
+    // Only adopt windows that are already mapped: touching an unmapped window
+    // makes mutter assert on its stack position.
     _offerWindowToRenderers(win) {
         if (!win)
             return;
@@ -126,16 +124,17 @@ export class WallpaperService {
             return;
 
         if (attempt >= SCAN_ATTEMPTS) {
-            this._logger.warn(`${pending.length} 个渲染器没有出现窗口，检查场景路径与引擎输出`);
+            this._logger.warn(`${pending.length} renderer(s) produced no window`);
             return;
         }
 
-        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SCAN_INTERVAL_MS, () => {
-            this._timeoutIds = this._timeoutIds.filter(sourceId => sourceId !== id);
+        let sourceId = 0;
+        sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SCAN_INTERVAL_MS, () => {
+            this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
             this._scanForRenderers(attempt + 1);
             return GLib.SOURCE_REMOVE;
         });
-        this._timeoutIds.push(id);
+        this._timeoutIds.push(sourceId);
     }
 
     _spawnRenderers() {
@@ -171,7 +170,7 @@ export class WallpaperService {
         if (!this._enabled)
             return;
 
-        this._logger.debug('显示器变化，重启渲染器');
+        this._logger.debug('monitors changed, restarting renderers');
         this._cloner?.destroy();
         this._stopRenderers();
         this._createCloner();

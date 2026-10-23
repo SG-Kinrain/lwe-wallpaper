@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -17,7 +16,7 @@ function call(method) {
         Gio.DBusCallFlags.NONE, -1, null, null);
 }
 
-// 通过扩展系统重启自己，等价于在「扩展」应用里关掉再打开。
+// Restarts the extension through the extension system, same as toggling it by hand.
 export function applyExtension() {
     call('DisableExtension');
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, RESTART_DELAY_MS, () => {

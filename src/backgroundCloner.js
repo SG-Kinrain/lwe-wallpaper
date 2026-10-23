@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
@@ -7,8 +6,8 @@ import St from 'gi://St';
 import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-// 把渲染器画面克隆进 GNOME 自己的背景 actor。
-// 不能把窗口 actor 搬进背景组：mutter 的 damage 记账会因非法矩形直接崩。
+// Reparenting the window actor into the background group crashes mutter
+// (pixman: invalid rectangle), so the renderer output is cloned instead.
 export class BackgroundCloner {
     constructor(getSourceActor, logger) {
         this._getSourceActor = getSourceActor;
@@ -39,7 +38,7 @@ export class BackgroundCloner {
         try {
             Main.layoutManager._updateBackgrounds();
         } catch (e) {
-            this._logger.warn(`重建背景失败: ${e.message ?? e}`);
+            this._logger.warn(`background rebuild failed: ${e.message ?? e}`);
         }
     }
 
@@ -57,7 +56,7 @@ export class BackgroundCloner {
         try {
             wrapper.destroy();
         } catch {
-            // 已随背景 actor 销毁
+            // destroyed together with the background actor
         }
     }
 
@@ -69,14 +68,15 @@ export class BackgroundCloner {
             try {
                 actor.disconnect(id);
             } catch {
-                // actor 已销毁
+                // actor already destroyed
             }
         }
         this._signalIds = [];
         this._actors.clear();
     }
 
-    // GNOME 会先建 0×0 的 actor 再 resize（不重建），因此这里不能按尺寸过滤。
+    // GNOME creates the background actor at 0x0 and resizes it later without
+    // recreating it, so zero-sized actors must not be skipped.
     _onBackgroundActor(actor) {
         this._actors.set(actor.monitor, actor);
         this.detach(actor.monitor);
@@ -110,6 +110,6 @@ export class BackgroundCloner {
         });
         this._signalIds.push([backgroundActor, id]);
 
-        this._logger.debug(`monitor=${monitorIndex} 已挂克隆`);
+        this._logger.debug(`monitor=${monitorIndex} clone attached`);
     }
 }

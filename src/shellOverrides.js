@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
@@ -7,8 +6,9 @@ import Shell from 'gi://Shell';
 import * as Workspace from 'resource:///org/gnome/shell/ui/workspace.js';
 import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThumbnail.js';
 
-// 渲染窗口必须真实存在（克隆需要它的画面），但不能表现成一个应用。
-// Dock 走应用层（Shell.App / AppSystem），只过滤 get_window_actors 是不够的。
+// The renderer window has to stay alive for the clone, but must not behave like
+// an application. Dash to Dock reads the app layer, so filtering window actors
+// alone is not enough.
 export class ShellOverrides {
     constructor(isRenderer, logger) {
         this._isRenderer = isRenderer;
@@ -61,7 +61,7 @@ export class ShellOverrides {
                 return orig.call(this).filter(app => self._countWindows(app) > 0);
             });
 
-        this._logger.debug('窗口/应用过滤已安装');
+        this._logger.debug('window and app filters installed');
     }
 
     _countWindows(app) {

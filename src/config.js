@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
 import GLib from 'gi://GLib';
 
@@ -48,7 +47,7 @@ export function loadConfig() {
         if (ok)
             Object.assign(config, JSON.parse(new TextDecoder().decode(bytes)));
     } catch (e) {
-        log.warn(`读取配置失败，使用默认值: ${e.message ?? e}`);
+        log.warn(`config read failed, using defaults: ${e.message ?? e}`);
     }
 
     config.fps = clampFps(config.fps, DEFAULT_CONFIG.fps);
@@ -64,8 +63,7 @@ export function loadConfig() {
 export function saveConfig(config) {
     const dir = GLib.path_get_dirname(CONFIG_PATH);
     GLib.mkdir_with_parents(dir, 0o755);
-    return GLib.file_set_contents(CONFIG_PATH,
-        `${JSON.stringify(config, null, 2)}\n`);
+    return GLib.file_set_contents(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 export function configForMonitor(config, monitorIndex) {
@@ -87,7 +85,7 @@ export function targetMonitors(config, monitorCount) {
     return Array.from({length: monitorCount}, (_, i) => i);
 }
 
-// 坐标在 Wayland 下会被 GLFW 忽略，真正的定位由 Renderer 通过 move_frame 完成。
+// Coordinates are ignored by GLFW on Wayland; Renderer positions the window with move_frame.
 export function buildEngineArgv(config, monitor) {
     return [
         config.engine,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 kinrain and contributors
 
-// 入口：按时间戳动态加载 src/，绕开 gjs 的模块缓存以便热重载。
+// gjs caches modules by URI, so the implementation is imported with a fresh
+// timestamp on every enable to make hot-reloading work without a logout.
 
 import GLib from 'gi://GLib';
 
@@ -25,7 +25,7 @@ export default class LweWallpaperExtension extends Extension {
             modules = await Promise.all(
                 MODULES.map(file => import(`${base}/${file}?v=${version}`)));
         } catch (e) {
-            console.error('[lwe] 加载模块失败', e);
+            console.error('[lwe] module load failed', e);
             return;
         }
 
@@ -43,7 +43,7 @@ export default class LweWallpaperExtension extends Extension {
             this._service.enable();
             logger.debug(`build=${version}`);
         } catch (e) {
-            console.error('[lwe] 启用失败', e);
+            console.error('[lwe] enable failed', e);
             this._service = null;
         }
     }
@@ -52,7 +52,7 @@ export default class LweWallpaperExtension extends Extension {
         try {
             this._service?.disable();
         } catch (e) {
-            console.error('[lwe] 停用失败', e);
+            console.error('[lwe] disable failed', e);
         }
         this._service = null;
     }
