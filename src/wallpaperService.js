@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -10,6 +11,7 @@ import {setDebug} from './logger.js';
 
 const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
+const STACK_CHECK_MS = 1000;
 
 export class WallpaperService {
     constructor({Renderer, ShellOverrides, BackgroundCloner, startDiagnostics, logger}) {
@@ -106,6 +108,20 @@ export class WallpaperService {
                 (_wm, actor) => this._offerWindowToRenderers(actor.meta_window))]);
         this._signalIds.push([Main.layoutManager,
             Main.layoutManager.connect('monitors-changed', () => this._restart())]);
+        this._signalIds.push([global.display,
+            global.display.connect('restacked', () => this._enforceStacking())]);
+        this._signalIds.push([global.display,
+            global.display.connect('notify::focus-window', () => this._enforceStacking())]);
+
+        // Shell popups hold a grab that makes lower() a no-op, so the window can
+        // stay raised after the menu closes with no further restack to react to.
+        const watchdogId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, STACK_CHECK_MS, () => {
+            if (!this._enabled)
+                return GLib.SOURCE_REMOVE;
+            this._enforceStacking();
+            return GLib.SOURCE_CONTINUE;
+        });
+        this._timeoutIds.push(watchdogId);
     }
 
     _offerWindowToRenderers(win) {
@@ -145,6 +161,42 @@ export class WallpaperService {
             return GLib.SOURCE_REMOVE;
         });
         this._timeoutIds.push(sourceId);
+    }
+
+    // mutter restacks on focus, workspace switches and fullscreen exits, and the
+    // renderer can end up above application windows, covering the whole screen.
+    _enforceStacking() {
+        if (!this._enabled || this._config?.keepAtBottom === false)
+            return;
+
+        const actors = global.get_window_actors(false);
+        const ours = new Set();
+        for (const renderer of this._renderers.values()) {
+            if (renderer.actor)
+                ours.add(renderer.actor);
+        }
+        if (ours.size === 0)
+            return;
+
+        const indexes = [...ours].map(actor => actors.indexOf(actor)).filter(i => i >= 0);
+        if (indexes.length === 0)
+            return;
+
+        const lowest = Math.min(...indexes);
+        const covered = actors.slice(0, lowest).some(actor => {
+            const win = actor.meta_window;
+            if (!win || win.is_skip_taskbar())
+                return false;
+            return [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
+                    Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY].includes(win.get_window_type());
+        });
+
+        if (!covered)
+            return;
+
+        this._logger.debug('renderer stacked above an application window, lowering');
+        for (const renderer of this._renderers.values())
+            renderer.window?.lower();
     }
 
     _spawnRenderers() {
