@@ -17,7 +17,14 @@ export default class LwePrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const config = loadConfig();
         const scenes = listScenes(config.workshop);
-        const monitorCount = Math.max(1, Gdk.Display.get_default()?.get_n_monitors() ?? 2);
+        let monitorCount = 1;
+        try {
+            monitorCount = Gdk.Display.get_default()?.get_monitors()?.get_n_items() ?? 1;
+        } catch (e) {
+            console.error('[lwe] cannot count monitors', e);
+        }
+        monitorCount = Math.max(monitorCount,
+            ...Object.keys(config.perMonitor ?? {}).map(k => Number(k) + 1), 1);
 
         const page = new Adw.PreferencesPage({
             title: _('Wallpaper'),
