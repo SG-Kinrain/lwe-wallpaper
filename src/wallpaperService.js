@@ -31,6 +31,7 @@ export class WallpaperService {
         this._timeoutIds = [];
         this._diagnostics = null;
         this._stackCheckPending = false;
+        this._unredirectInhibited = false;
         this._enabled = false;
     }
 
@@ -66,8 +67,10 @@ export class WallpaperService {
         }
 
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            if (this._enabled)
+            if (this._enabled) {
                 this._cloner?.rebuild();
+                this._updateUnredirect();
+            }
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -77,6 +80,15 @@ export class WallpaperService {
 
         this._diagnostics?.stop();
         this._diagnostics = null;
+
+        if (this._unredirectInhibited) {
+            try {
+                global.compositor.enable_unredirect?.();
+            } catch (e) {
+                this._logger.warn(`unredirect release failed: ${e.message ?? e}`);
+            }
+            this._unredirectInhibited = false;
+        }
 
         for (const [obj, id] of this._signalIds) {
             try {
@@ -200,9 +212,38 @@ export class WallpaperService {
             this._stackCheckPending = false;
             this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
             this._enforceStacking();
+            this._updateUnredirect();
             return GLib.SOURCE_REMOVE;
         });
         this._timeoutIds.push(sourceId);
+    }
+
+    // A monitor-sized topmost window is handed straight to the display, skipping
+    // composition, so the panel and dock would never be drawn. Unredirection is
+    // refcounted; hold one reference while the renderer is that topmost window.
+    _updateUnredirect() {
+        const actors = global.get_window_actors(false);
+        const ours = new Set();
+        for (const renderer of this._renderers.values()) {
+            if (renderer.actor)
+                ours.add(renderer.actor);
+        }
+
+        const topmost = actors[actors.length - 1];
+        const inhibit = ours.size > 0 && ours.has(topmost);
+        if (inhibit === this._unredirectInhibited)
+            return;
+
+        try {
+            if (inhibit)
+                global.compositor.disable_unredirect?.();
+            else
+                global.compositor.enable_unredirect?.();
+            this._unredirectInhibited = inhibit;
+            this._logger.debug(`unredirect inhibited=${inhibit}`);
+        } catch (e) {
+            this._logger.warn(`unredirect toggle failed: ${e.message ?? e}`);
+        }
     }
 
     // mutter restacks on focus, workspace switches and fullscreen exits, and the
