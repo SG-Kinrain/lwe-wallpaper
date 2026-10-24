@@ -32,6 +32,7 @@ export class WallpaperService {
         this._diagnostics = null;
         this._monitors = [];
         this._targets = [];
+        this._failed = new Set();
         this._stackCheckPending = false;
         this._unredirectInhibited = false;
         this._enabled = false;
@@ -113,6 +114,14 @@ export class WallpaperService {
         this._injectionManager = null;
     }
 
+    _isAdopted(win) {
+        for (const renderer of this._renderers.values()) {
+            if (renderer.window === win)
+                return true;
+        }
+        return false;
+    }
+
     _isRendererWindow(win) {
         for (const renderer of this._renderers.values()) {
             if (renderer.owns(win))
@@ -163,7 +172,7 @@ export class WallpaperService {
     }
 
     _offerWindowToRenderers(win) {
-        if (!win || this._isRendererWindow(win))
+        if (!win || this._isAdopted(win))
             return;
 
         for (const renderer of this._renderers.values()) {
@@ -187,10 +196,15 @@ export class WallpaperService {
             return;
 
         if (attempt >= SCAN_ATTEMPTS) {
-            this._logger.warn(`${pending.length} renderer(s) produced no window`);
+            const titles = global.get_window_actors(false)
+                .map(actor => actor.meta_window?.get_title?.() ?? '?');
+            this._logger.warn(`${pending.length} renderer(s) produced no window; ` +
+                `visible: ${titles.join(' | ')}`);
             for (const renderer of pending) {
-                renderer.stop();
+                this._failed.add(renderer.monitorIndex);
+                this._renderers.delete(renderer.monitorIndex);
                 this._cloner?.detach(renderer.monitorIndex);
+                renderer.stop();
             }
             this._startNextRenderer();
             return;
@@ -302,6 +316,7 @@ export class WallpaperService {
 
     _spawnRenderers() {
         this._killStaleEngines();
+        this._failed = new Set();
         this._monitors = Main.layoutManager.monitors;
         this._targets = targetMonitors(this._config, this._monitors.length)
             .filter(index => this._monitors[index]);
@@ -314,7 +329,8 @@ export class WallpaperService {
         if (!this._enabled)
             return;
 
-        const monitorIndex = this._targets.find(index => !this._renderers.has(index));
+        const monitorIndex = this._targets.find(index =>
+            !this._renderers.has(index) && !this._failed.has(index));
         if (monitorIndex === undefined)
             return;
 
