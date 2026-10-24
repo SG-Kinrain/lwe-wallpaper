@@ -126,13 +126,17 @@ export class WallpaperService {
         // Menu grabs make lower() a no-op, so the stack has to be fixed once the
         // menu is gone. Main itself is a module namespace and cannot be patched.
         const service = this;
-        for (const method of ['open', 'close', 'toggle']) {
-            this._injectionManager.overrideMethod(PopupMenu.PopupMenu.prototype, method,
-                orig => function (...args) {
-                    const result = orig.apply(this, args);
-                    service._scheduleStackCheck();
-                    return result;
-                });
+        try {
+            for (const method of ['open', 'close', 'toggle']) {
+                this._injectionManager.overrideMethod(PopupMenu.PopupMenu.prototype, method,
+                    orig => function (...args) {
+                        const result = orig.apply(this, args);
+                        service._scheduleStackCheck();
+                        return result;
+                    });
+            }
+        } catch (e) {
+            this._logger.warn(`menu hooks unavailable: ${e.message ?? e}`);
         }
     }
 
