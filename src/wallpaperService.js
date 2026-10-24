@@ -30,6 +30,8 @@ export class WallpaperService {
         this._signalIds = [];
         this._timeoutIds = [];
         this._diagnostics = null;
+        this._monitors = [];
+        this._targets = [];
         this._stackCheckPending = false;
         this._unredirectInhibited = false;
         this._enabled = false;
@@ -171,17 +173,6 @@ export class WallpaperService {
             if (actor && renderer.adopt(win, actor))
                 return;
         }
-
-        // Fallback only when a single renderer is still waiting, so two renderers
-        // can never claim the same window.
-        const pending = [...this._renderers.values()].filter(r => !r.isReady);
-        if (pending.length !== 1)
-            return;
-        if (!`${win.get_title?.() ?? ''}`.toLowerCase().includes('wallpaperengine'))
-            return;
-        const actor = win.get_compositor_private();
-        if (actor && pending[0].adopt(win, actor))
-            this._logger.warn(`monitor=${pending[0].monitorIndex} bound by window title`);
     }
 
     _scanForRenderers(attempt) {
@@ -201,6 +192,7 @@ export class WallpaperService {
                 renderer.stop();
                 this._cloner?.detach(renderer.monitorIndex);
             }
+            this._startNextRenderer();
             return;
         }
 
@@ -310,26 +302,37 @@ export class WallpaperService {
 
     _spawnRenderers() {
         this._killStaleEngines();
-        const monitors = Main.layoutManager.monitors;
-        const targets = targetMonitors(this._config, monitors.length);
+        this._monitors = Main.layoutManager.monitors;
+        this._targets = targetMonitors(this._config, this._monitors.length)
+            .filter(index => this._monitors[index]);
+        this._startNextRenderer();
+    }
 
-        for (const monitorIndex of targets) {
-            const monitor = monitors[monitorIndex];
-            if (!monitor)
-                continue;
+    // One engine at a time: with a single engine window on screen the title match
+    // cannot bind two instances to the same window.
+    _startNextRenderer() {
+        if (!this._enabled)
+            return;
 
-            const renderer = new this._Renderer({
-                config: configForMonitor(this._config, monitorIndex),
-                monitorIndex,
-                monitor,
-                logger: this._logger,
-                onReady: r => this._cloner?.attach(r.monitorIndex),
-                onLost: r => this._cloner?.detach(r.monitorIndex),
-            });
+        const monitorIndex = this._targets.find(index => !this._renderers.has(index));
+        if (monitorIndex === undefined)
+            return;
 
-            this._renderers.set(monitorIndex, renderer);
-            renderer.start();
-        }
+        const renderer = new this._Renderer({
+            config: configForMonitor(this._config, monitorIndex),
+            monitorIndex,
+            monitor: this._monitors[monitorIndex],
+            logger: this._logger,
+            onReady: r => {
+                this._cloner?.attach(r.monitorIndex);
+                this._startNextRenderer();
+            },
+            onLost: r => this._cloner?.detach(r.monitorIndex),
+        });
+
+        this._renderers.set(monitorIndex, renderer);
+        renderer.start();
+        this._scanForRenderers(0);
     }
 
     _stopRenderers() {

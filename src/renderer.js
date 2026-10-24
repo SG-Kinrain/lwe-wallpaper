@@ -110,14 +110,20 @@ export class Renderer {
     }
 
     matches(win) {
-        if (!win || this.isReady || !this._client)
+        if (!win || this.isReady)
             return false;
 
         try {
-            return this._client.owns_window(win);
+            if (this._client?.owns_window(win))
+                return true;
         } catch {
-            return false;
+            // owns_window throws for some window types
         }
+
+        // The engine opens its own Wayland connection, so owns_window usually says
+        // no; the title is shared by every instance, which is why engines are
+        // started one at a time.
+        return `${win.get_title?.() ?? ''}`.toLowerCase().includes('wallpaperengine');
     }
 
     // A window that is not in the NORMAL layer yet must not be touched:
