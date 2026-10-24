@@ -19,7 +19,6 @@ export class Renderer {
 
         this._process = null;
         this._client = null;
-        this._pid = 0;
         this._window = null;
         this._actor = null;
         this._signalIds = [];
@@ -59,8 +58,7 @@ export class Renderer {
             return false;
         }
 
-        this._pid = this._readPid(this._process);
-        this._logger.debug(`monitor=${this._monitorIndex} engine pid=${this._pid}`);
+        this._logger.debug(`monitor=${this._monitorIndex} engine pid=${this._readPid(this._process)}`);
 
         this._process.wait_async(null, () => {
             if (!this._stopped)
@@ -98,7 +96,6 @@ export class Renderer {
         this._client = null;
         this._window = null;
         this._actor = null;
-        this._pid = 0;
     }
 
     owns(win) {

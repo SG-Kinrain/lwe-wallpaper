@@ -2,25 +2,22 @@
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import Meta from 'gi://Meta';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {loadConfig, configForMonitor, targetMonitors} from './config.js';
 import {setDebug} from './logger.js';
-import {describeState} from './diagnostics.js';
+import {StackingGuard} from './stacking.js';
 
 const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
 
 export class WallpaperService {
-    constructor({Renderer, ShellOverrides, BackgroundCloner, startDiagnostics, logger}) {
+    constructor({Renderer, ShellOverrides, BackgroundCloner, logger}) {
         this._Renderer = Renderer;
         this._ShellOverrides = ShellOverrides;
         this._BackgroundCloner = BackgroundCloner;
-        this._startDiagnostics = startDiagnostics;
         this._logger = logger;
 
         this._injectionManager = null;
@@ -29,12 +26,10 @@ export class WallpaperService {
         this._config = null;
         this._signalIds = [];
         this._timeoutIds = [];
-        this._diagnostics = null;
         this._monitors = [];
         this._targets = [];
         this._failed = new Set();
-        this._stackCheckPending = false;
-        this._unredirectInhibited = false;
+        this._stacking = null;
         this._enabled = false;
     }
 
@@ -59,20 +54,13 @@ export class WallpaperService {
 
         this._createCloner();
         this._connectShellSignals();
+        this._createStackingGuard();
         this._spawnRenderers();
-        this._scanForRenderers(0);
-
-        if (this._config.debug && this._startDiagnostics) {
-            this._diagnostics = this._startDiagnostics({
-                renderers: this._renderers,
-                logger: this._logger,
-            });
-        }
 
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             if (this._enabled) {
                 this._cloner?.rebuild();
-                this._updateUnredirect();
+                this._stacking?.schedule();
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -80,18 +68,6 @@ export class WallpaperService {
 
     disable() {
         this._enabled = false;
-
-        this._diagnostics?.stop();
-        this._diagnostics = null;
-
-        if (this._unredirectInhibited) {
-            try {
-                global.compositor.enable_unredirect?.();
-            } catch (e) {
-                this._logger.warn(`unredirect release failed: ${e.message ?? e}`);
-            }
-            this._unredirectInhibited = false;
-        }
 
         for (const [obj, id] of this._signalIds) {
             try {
@@ -105,6 +81,9 @@ export class WallpaperService {
         for (const id of this._timeoutIds)
             GLib.source_remove(id);
         this._timeoutIds = [];
+
+        this._stacking?.stop();
+        this._stacking = null;
 
         this._stopRenderers();
         this._cloner?.destroy();
@@ -143,32 +122,16 @@ export class WallpaperService {
                 (_wm, actor) => this._offerWindowToRenderers(actor.meta_window))]);
         this._signalIds.push([Main.layoutManager,
             Main.layoutManager.connect('monitors-changed', () => this._restart())]);
-        this._signalIds.push([global.display,
-            global.display.connect('restacked', () => this._scheduleStackCheck())]);
-        this._signalIds.push([global.display,
-            global.display.connect('notify::focus-window', () => this._scheduleStackCheck())]);
-        this._signalIds.push([global.display,
-            global.display.connect('in-fullscreen-changed', () => {
-                if (!this._config?.debug)
-                    return;
-                this._logger.warn(`in-fullscreen-changed: ${describeState(this._renderers)}`);
-            })]);
+    }
 
-        // Menu grabs make lower() a no-op, so the stack has to be fixed once the
-        // menu is gone. Main itself is a module namespace and cannot be patched.
-        const service = this;
-        try {
-            for (const method of ['open', 'close', 'toggle']) {
-                this._injectionManager.overrideMethod(PopupMenu.PopupMenu.prototype, method,
-                    orig => function (...args) {
-                        const result = orig.apply(this, args);
-                        service._scheduleStackCheck();
-                        return result;
-                    });
-            }
-        } catch (e) {
-            this._logger.warn(`menu hooks unavailable: ${e.message ?? e}`);
-        }
+    _createStackingGuard() {
+        this._stacking = new StackingGuard({
+            renderers: this._renderers,
+            config: this._config,
+            logger: this._logger,
+            injectionManager: this._injectionManager,
+        });
+        this._stacking.start();
     }
 
     _offerWindowToRenderers(win) {
@@ -217,116 +180,6 @@ export class WallpaperService {
             return GLib.SOURCE_REMOVE;
         });
         this._timeoutIds.push(sourceId);
-    }
-
-    _scheduleStackCheck() {
-        if (!this._enabled || this._stackCheckPending)
-            return;
-        this._stackCheckPending = true;
-        let sourceId = 0;
-        sourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            this._stackCheckPending = false;
-            this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
-            this._enforceStacking();
-            this._updateUnredirect();
-            return GLib.SOURCE_REMOVE;
-        });
-        this._timeoutIds.push(sourceId);
-    }
-
-    // A monitor-sized topmost window is handed straight to the display, skipping
-    // composition, so the panel and dock would never be drawn. Unredirection is
-    // refcounted; hold one reference while the renderer is that topmost window.
-    _updateUnredirect() {
-        const actors = global.get_window_actors(false);
-        const ours = new Set();
-        for (const renderer of this._renderers.values()) {
-            if (renderer.actor)
-                ours.add(renderer.actor);
-        }
-
-        // Scanout is decided per monitor view, so a window on one screen says
-        // nothing about the other: find the topmost window on each monitor.
-        const monitors = Main.layoutManager.monitors;
-        const decided = new Array(monitors.length).fill(false);
-        let inhibit = false;
-
-        for (let i = actors.length - 1; i >= 0 && !inhibit; i--) {
-            const actor = actors[i];
-            const win = actor.meta_window;
-            if (!win)
-                continue;
-
-            const rect = win.get_frame_rect();
-            for (let m = 0; m < monitors.length; m++) {
-                if (decided[m])
-                    continue;
-                const mon = monitors[m];
-                const overlaps = rect.x < mon.x + mon.width &&
-                    rect.x + rect.width > mon.x &&
-                    rect.y < mon.y + mon.height &&
-                    rect.y + rect.height > mon.y;
-                if (!overlaps)
-                    continue;
-
-                decided[m] = true;
-                if (ours.has(actor))
-                    inhibit = true;
-            }
-        }
-
-        if (inhibit === this._unredirectInhibited)
-            return;
-
-        try {
-            if (inhibit)
-                global.compositor.disable_unredirect?.();
-            else
-                global.compositor.enable_unredirect?.();
-            this._unredirectInhibited = inhibit;
-            this._logger.debug(`unredirect inhibited=${inhibit}`);
-        } catch (e) {
-            this._logger.warn(`unredirect toggle failed: ${e.message ?? e}`);
-        }
-    }
-
-    // mutter restacks on focus, workspace switches and fullscreen exits, and the
-    // renderer can end up above application windows, covering the whole screen.
-    _enforceStacking() {
-        if (!this._enabled || this._config?.keepAtBottom === false)
-            return;
-
-        const actors = global.get_window_actors(false);
-        const ours = new Set();
-        for (const renderer of this._renderers.values()) {
-            if (renderer.actor)
-                ours.add(renderer.actor);
-        }
-        if (ours.size === 0)
-            return;
-
-        const indexes = [...ours].map(actor => actors.indexOf(actor)).filter(i => i >= 0);
-        if (indexes.length === 0)
-            return;
-
-        const lowest = Math.min(...indexes);
-        const covered = actors.slice(0, lowest).some(actor => {
-            const win = actor.meta_window;
-            if (!win || win.is_skip_taskbar())
-                return false;
-            const id = `${win.get_app_id?.() ?? ''}${win.get_title?.() ?? ''}`.toLowerCase();
-            if (id.includes('wallpaperengine'))
-                return false;
-            return [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
-                    Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY].includes(win.get_window_type());
-        });
-
-        if (!covered)
-            return;
-
-        this._logger.debug('renderer stacked above an application window, lowering');
-        for (const renderer of this._renderers.values())
-            renderer.window?.lower();
     }
 
     // A previous session can leave engines behind (crash, failed enable) and their
