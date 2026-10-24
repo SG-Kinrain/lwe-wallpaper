@@ -98,12 +98,10 @@ export class Renderer {
         this._actor = null;
     }
 
+    // Hot path: the shell asks this for every window actor on every restack, so it
+    // must not do GI calls or string work. Only adopted windows count as ours.
     owns(win) {
-        if (!win)
-            return false;
-        if (this._window === win)
-            return true;
-        return this.matches(win);
+        return Boolean(win) && this._window === win;
     }
 
     matches(win) {
