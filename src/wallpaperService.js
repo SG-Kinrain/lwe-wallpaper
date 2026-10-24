@@ -245,8 +245,36 @@ export class WallpaperService {
                 ours.add(renderer.actor);
         }
 
-        const topmost = actors[actors.length - 1];
-        const inhibit = ours.size > 0 && ours.has(topmost);
+        // Scanout is decided per monitor view, so a window on one screen says
+        // nothing about the other: find the topmost window on each monitor.
+        const monitors = Main.layoutManager.monitors;
+        const decided = new Array(monitors.length).fill(false);
+        let inhibit = false;
+
+        for (let i = actors.length - 1; i >= 0 && !inhibit; i--) {
+            const actor = actors[i];
+            const win = actor.meta_window;
+            if (!win)
+                continue;
+
+            const rect = win.get_frame_rect();
+            for (let m = 0; m < monitors.length; m++) {
+                if (decided[m])
+                    continue;
+                const mon = monitors[m];
+                const overlaps = rect.x < mon.x + mon.width &&
+                    rect.x + rect.width > mon.x &&
+                    rect.y < mon.y + mon.height &&
+                    rect.y + rect.height > mon.y;
+                if (!overlaps)
+                    continue;
+
+                decided[m] = true;
+                if (ours.has(actor))
+                    inhibit = true;
+            }
+        }
+
         if (inhibit === this._unredirectInhibited)
             return;
 
