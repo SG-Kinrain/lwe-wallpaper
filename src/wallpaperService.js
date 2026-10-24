@@ -161,17 +161,27 @@ export class WallpaperService {
     }
 
     _offerWindowToRenderers(win) {
-        if (!win)
+        if (!win || this._isRendererWindow(win))
             return;
 
         for (const renderer of this._renderers.values()) {
-            if (!renderer.matches(win))
+            if (renderer.isReady || !renderer.matches(win))
                 continue;
             const actor = win.get_compositor_private();
-            if (actor)
-                renderer.adopt(win, actor);
-            return;
+            if (actor && renderer.adopt(win, actor))
+                return;
         }
+
+        // Fallback only when a single renderer is still waiting, so two renderers
+        // can never claim the same window.
+        const pending = [...this._renderers.values()].filter(r => !r.isReady);
+        if (pending.length !== 1)
+            return;
+        if (!`${win.get_title?.() ?? ''}`.toLowerCase().includes('wallpaperengine'))
+            return;
+        const actor = win.get_compositor_private();
+        if (actor && pending[0].adopt(win, actor))
+            this._logger.warn(`monitor=${pending[0].monitorIndex} bound by window title`);
     }
 
     _scanForRenderers(attempt) {

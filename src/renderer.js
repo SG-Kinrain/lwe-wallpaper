@@ -110,23 +110,14 @@ export class Renderer {
     }
 
     matches(win) {
-        if (!win || this.isReady)
+        if (!win || this.isReady || !this._client)
             return false;
 
-        if (this._client) {
-            try {
-                if (this._client.owns_window(win))
-                    return true;
-            } catch {
-                // owns_window throws on some versions, fall through to heuristics
-            }
+        try {
+            return this._client.owns_window(win);
+        } catch {
+            return false;
         }
-
-        if (this._pid && typeof win.get_pid === 'function' && win.get_pid() === this._pid)
-            return true;
-
-        const title = (win.get_title?.() ?? '').toLowerCase();
-        return title.includes('wallpaperengine');
     }
 
     // A window that is not in the NORMAL layer yet must not be touched:
