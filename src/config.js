@@ -86,10 +86,17 @@ export function targetMonitors(config, monitorCount) {
 }
 
 // Coordinates are ignored by GLFW on Wayland; Renderer positions the window with move_frame.
+// Mutter hands the topmost window straight to the display when its paint box matches the
+// monitor rect exactly (meta-compositor-view-native.c), which skips compositing and makes
+// the panel and dock disappear. Two pixels of slack keep the match from ever succeeding.
+const SCANOUT_MARGIN = 2;
+
 export function buildEngineArgv(config, monitor) {
+    const width = Math.max(64, monitor.width - SCANOUT_MARGIN);
+    const height = Math.max(64, monitor.height - SCANOUT_MARGIN);
     return [
         config.engine,
-        '--window', `${monitor.x}x${monitor.y}x${monitor.width}x${monitor.height}`,
+        '--window', `${monitor.x}x${monitor.y}x${width}x${height}`,
         '--assets-dir', config.assets,
         '--scaling', config.scaling,
         '--fps', String(config.fps),
