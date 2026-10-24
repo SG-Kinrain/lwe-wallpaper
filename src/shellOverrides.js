@@ -30,11 +30,15 @@ export class ShellOverrides {
                     .filter(win => !isRenderer(win));
             });
 
+        // Workspace passes a Meta.Window, WorkspaceThumbnail passes a window actor.
         for (const proto of [Workspace.Workspace.prototype,
                              WorkspaceThumbnail.WorkspaceThumbnail.prototype]) {
             injectionManager.overrideMethod(proto, '_isOverviewWindow',
-                orig => function (win) {
-                    return isRenderer(win) ? false : orig.apply(this, [win]);
+                orig => function (windowOrActor) {
+                    const win = windowOrActor?.get_meta_window?.() ?? windowOrActor;
+                    if (win && isRenderer(win))
+                        return false;
+                    return orig.apply(this, [windowOrActor]);
                 });
         }
 
