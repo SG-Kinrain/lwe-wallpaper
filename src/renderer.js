@@ -156,11 +156,25 @@ export class Renderer {
 
     _spawn(argv) {
         if (!Meta.WaylandClient)
-            throw new Error('Meta.WaylandClient is unavailable (GNOME 45+ required)');
+            throw new Error('Meta.WaylandClient is unavailable');
 
         const launcher = new Gio.SubprocessLauncher({
             flags: Gio.SubprocessFlags.STDOUT_SILENCE,
         });
+
+        // GNOME 49 replaced spawnv() with new_subprocess(), which creates the
+        // client and starts the process in one call.
+        if (typeof Meta.WaylandClient.new_subprocess === 'function') {
+            try {
+                this._client = Meta.WaylandClient.new_subprocess(global.context, launcher, argv);
+                const process = this._client.get_subprocess?.();
+                if (process)
+                    return process;
+            } catch (e) {
+                this._logger.warn(`new_subprocess failed: ${e.message ?? e}`);
+            }
+        }
+
         this._client = Meta.WaylandClient.new(global.context, launcher);
         const process = this._client.spawnv(global.display, argv);
         if (launcher.close)

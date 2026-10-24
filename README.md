@@ -24,7 +24,7 @@ GNOME 不支持 Wayland 的 `wlr-layer-shell` 协议，所以常规的壁纸工�
 
 | 组件 | 说明 |
 |---|---|
-| GNOME Shell 48 | 依赖 `Meta.WaylandClient.spawnv`（49 已移除）与 `global.compositor.disable_unredirect`（48 才有） |
+| GNOME Shell 48–50 | 48 用 `Meta.WaylandClient.spawnv`，49+ 用 `new_subprocess`（运行时自动选择）；scanout 抑制需要 48+ |
 | [`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine) | 必须以 `--window` 模式工作；需自行编译，或放到 `~/.local/bin` |
 | Wallpaper Engine 的工坊内容 | Steam 订阅的场景目录（`steamapps/workshop/content/431960`）与 `assets` 目录 |
 
