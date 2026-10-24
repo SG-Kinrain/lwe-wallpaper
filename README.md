@@ -28,6 +28,8 @@ GNOME 不支持 Wayland 的 `wlr-layer-shell` 协议，所以常规的壁纸工�
 | [`linux-wallpaperengine`](https://github.com/Almamu/linux-wallpaperengine) | 必须以 `--window` 模式工作；需自行编译，或放到 `~/.local/bin` |
 | Wallpaper Engine 的工坊内容 | Steam 订阅的场景目录（`steamapps/workshop/content/431960`）与 `assets` 目录 |
 
+> 仅在 GNOME Shell 48（48.7）上实测。49/50 的适配是按对应版本的源码核对 API 后写的，未实机验证。
+
 ## 安装
 
 ```bash
