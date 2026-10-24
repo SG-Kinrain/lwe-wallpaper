@@ -243,10 +243,11 @@ export class WallpaperService {
             return;
 
         this._logger.debug('monitors changed, restarting renderers');
+        // Reuse the cloner: its background hook is installed once per enable, and
+        // installing it again would wrap the previous override and clone twice.
         this._cloner?.destroy();
         this._stopRenderers();
-        this._createCloner();
         this._spawnRenderers();
-        this._cloner.rebuild();
+        this._cloner?.rebuild();
     }
 }

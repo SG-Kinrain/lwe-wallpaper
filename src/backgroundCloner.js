@@ -78,7 +78,12 @@ export class BackgroundCloner {
     _onBackgroundActor(actor) {
         if (!this._isDesktopBackground(actor))
             return;
+
         this._actors.set(actor.monitor, actor);
+        actor.connect('destroy', () => {
+            if (this._actors.get(actor.monitor) === actor)
+                this._actors.delete(actor.monitor);
+        });
         this._attachClone(actor);
     }
 

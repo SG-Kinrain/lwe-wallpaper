@@ -6,6 +6,10 @@ import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+const CHECK_INTERVAL_MS = 500;
+const MAX_LOWER_ATTEMPTS = 3;
+const LOWER_BACKOFF_MS = 30000;
+
 // Keeps the renderer windows out of the way: below application windows, and off
 // the compositor's direct scanout path so the shell keeps drawing its own chrome.
 export class StackingGuard {
@@ -18,6 +22,9 @@ export class StackingGuard {
         this._idleId = 0;
         this._unredirectInhibited = false;
         this._active = false;
+        this._lastCheck = 0;
+        this._lowerAttempts = 0;
+        this._backoffUntil = 0;
     }
 
     start() {
@@ -48,6 +55,13 @@ export class StackingGuard {
     schedule() {
         if (!this._active || this._idleId)
             return;
+
+        // restacked arrives in bursts (and lower() itself restacks), so collapse
+        // them: one check per interval is enough to keep the stack right.
+        const now = Date.now();
+        if (now < this._backoffUntil || now - this._lastCheck < CHECK_INTERVAL_MS)
+            return;
+        this._lastCheck = now;
 
         let sourceId = 0;
         sourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -125,12 +139,22 @@ export class StackingGuard {
                 .includes(win.get_window_type());
         });
 
-        if (!covered)
+        if (!covered) {
+            this._lowerAttempts = 0;
             return;
+        }
 
         this._logger.debug('renderer stacked above an application window, lowering');
         for (const renderer of this._renderers.values())
             renderer.window?.lower();
+
+        // If lowering keeps being needed the criteria or mutter disagree; stop
+        // fighting the compositor instead of restacking in a loop.
+        if (++this._lowerAttempts >= MAX_LOWER_ATTEMPTS) {
+            this._lowerAttempts = 0;
+            this._backoffUntil = Date.now() + LOWER_BACKOFF_MS;
+            this._logger.warn('renderer keeps ending up above app windows, backing off');
+        }
     }
 
     // A monitor-sized topmost window is handed straight to the display, skipping
