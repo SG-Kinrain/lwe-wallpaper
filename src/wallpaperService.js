@@ -29,6 +29,7 @@ export class WallpaperService {
         this._monitors = [];
         this._targets = [];
         this._failed = new Set();
+        this._scanSourceId = 0;
         this._stacking = null;
         this._enabled = false;
     }
@@ -81,6 +82,7 @@ export class WallpaperService {
         for (const id of this._timeoutIds)
             GLib.source_remove(id);
         this._timeoutIds = [];
+        this._scanSourceId = 0;
 
         this._stacking?.stop();
         this._stacking = null;
@@ -173,12 +175,21 @@ export class WallpaperService {
             return;
         }
 
+        // A retry chain per renderer would duplicate work; keep a single one.
+        if (this._scanSourceId) {
+            GLib.source_remove(this._scanSourceId);
+            this._scanSourceId = 0;
+        }
+
         let sourceId = 0;
         sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SCAN_INTERVAL_MS, () => {
+            if (this._scanSourceId === sourceId)
+                this._scanSourceId = 0;
             this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
             this._scanForRenderers(attempt + 1);
             return GLib.SOURCE_REMOVE;
         });
+        this._scanSourceId = sourceId;
         this._timeoutIds.push(sourceId);
     }
 
