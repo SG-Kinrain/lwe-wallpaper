@@ -18,7 +18,7 @@ GNOME 不支持 Wayland 的 `wlr-layer-shell` 协议，所以常规的壁纸工�
 - 渲染窗口在窗口栈底层，不遮挡应用；不进 Alt-Tab / 概览 / Dock
 - 支持 Wallpaper Engine 的 Scene / Web 场景（取决于上游引擎的兼容性）
 - 设置面板集成在 GNOME「扩展」应用里（场景下拉、帧率、缩放、每屏覆盖）
-- 支持热重载：修改 `src/` 下的实现后 `disable → enable` 即可生效，无需注销
+- 修改 `src/` 下的实现后需注销重登（gjs 按 URI 缓存模块）；仅 `prefs.js` / `prefs-ui.js` 例外，每次打开设置都重新读取
 
 ## 依赖
 
@@ -84,9 +84,10 @@ gsettings set org.gnome.shell disable-user-extensions false
 ## 架构
 
 ```
-extension.js          入口：按时间戳动态加载 src/（绕开 gjs 模块缓存）+ 依赖注入
-└── src/wallpaperService.js   编排：配置 → 每屏一个 Renderer → 就绪后通知挂克隆
-    ├── src/renderer.js       单实例：WaylandClient 启动、窗口接管、层级守卫、定位
+extension.js          入口：静态 import + 依赖注入
+└── src/wallpaperService.js   编排：配置 → 每屏一个 Renderer（串行启动）→ 就绪后挂克隆
+    ├── src/renderer.js       单实例：WaylandClient 启动、窗口接管、定位、全屏/最大化复位
+    ├── src/stacking.js       层级守卫（事件驱动）+ 逐屏判断并抑制 direct scanout
     ├── src/backgroundCloner.js  背景 actor 注入 + Clutter.Clone 挂载
     ├── src/shellOverrides.js    窗口层/应用层过滤
     └── src/config.js            默认值、读写、校验、argv 构建
