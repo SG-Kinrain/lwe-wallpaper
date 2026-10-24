@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
@@ -167,6 +168,10 @@ export class WallpaperService {
 
         if (attempt >= SCAN_ATTEMPTS) {
             this._logger.warn(`${pending.length} renderer(s) produced no window`);
+            for (const renderer of pending) {
+                renderer.stop();
+                this._cloner?.detach(renderer.monitorIndex);
+            }
             return;
         }
 
@@ -217,6 +222,9 @@ export class WallpaperService {
             const win = actor.meta_window;
             if (!win || win.is_skip_taskbar())
                 return false;
+            const id = `${win.get_app_id?.() ?? ''}${win.get_title?.() ?? ''}`.toLowerCase();
+            if (id.includes('wallpaperengine'))
+                return false;
             return [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
                     Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY].includes(win.get_window_type());
         });
@@ -229,7 +237,21 @@ export class WallpaperService {
             renderer.window?.lower();
     }
 
+    // A previous session can leave engines behind (crash, failed enable) and their
+    // windows then sit unowned in the stack.
+    _killStaleEngines() {
+        if (!this._config.engine)
+            return;
+        try {
+            Gio.Subprocess.new(['pkill', '-f', `${this._config.engine} --window`],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE);
+        } catch (e) {
+            this._logger.debug(`stale engine cleanup failed: ${e.message ?? e}`);
+        }
+    }
+
     _spawnRenderers() {
+        this._killStaleEngines();
         const monitors = Main.layoutManager.monitors;
         const targets = targetMonitors(this._config, monitors.length);
 
