@@ -10,6 +10,7 @@ import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension
 
 import {loadConfig, configForMonitor, targetMonitors} from './config.js';
 import {setDebug} from './logger.js';
+import {describeState} from './diagnostics.js';
 
 const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
@@ -123,6 +124,12 @@ export class WallpaperService {
             global.display.connect('restacked', () => this._scheduleStackCheck())]);
         this._signalIds.push([global.display,
             global.display.connect('notify::focus-window', () => this._scheduleStackCheck())]);
+        this._signalIds.push([global.display,
+            global.display.connect('in-fullscreen-changed', () => {
+                if (!this._config?.debug)
+                    return;
+                this._logger.warn(`in-fullscreen-changed: ${describeState(this._renderers)}`);
+            })]);
 
         // Menu grabs make lower() a no-op, so the stack has to be fixed once the
         // menu is gone. Main itself is a module namespace and cannot be patched.

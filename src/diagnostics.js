@@ -6,6 +6,10 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const INTERVAL_MS = 3000;
 
+export function describeState(renderers) {
+    return describe(renderers);
+}
+
 export function startDiagnostics({renderers, logger}) {
     let sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, INTERVAL_MS, () => {
         if (sourceId === 0)
@@ -30,7 +34,10 @@ export function startDiagnostics({renderers, logger}) {
 
 function describe(renderers) {
     const parts = [];
-    parts.push(`panel=${Main.panel?.visible ? 'visible' : 'hidden'}`);
+    const panelBox = Main.layoutManager.panelBox;
+    parts.push(`panel=${Main.panel?.visible ? 'visible' : 'hidden'}` +
+        `,box=${Math.round(panelBox?.y ?? -1)}/${Math.round(panelBox?.translation_y ?? 0)}` +
+        `,mode=${Main.sessionMode?.currentMode}`);
 
     const fullscreen = Main.layoutManager.monitors.map((_monitor, index) => {
         try {
@@ -52,7 +59,10 @@ function describe(renderers) {
         }
         parts.push(`win${index}=type${win.get_window_type()}` +
             `,fs${win.is_fullscreen()}` +
+            `,max${win.is_maximized?.()}` +
+            `,above${win.above}` +
             `,sized${win.is_monitor_sized?.()}` +
+            `,mon${win.get_monitor()}` +
             `,focus${win.has_focus()}` +
             `,layer${win.get_layer()}`);
     }
@@ -72,6 +82,10 @@ function describe(renderers) {
             return `${ours.has(actor) ? '*' : ''}${id}/t${win.get_window_type()}`;
         });
     parts.push(`stack(top6)=${stack.join(' > ')}`);
+
+    const groupNames = Main.uiGroup.get_children()
+        .map(actor => actor.name || actor.constructor?.name || '?');
+    parts.push(`uiGroup=[${groupNames.join(',')}]`);
 
     const dock = findDashActor();
     parts.push(dock
