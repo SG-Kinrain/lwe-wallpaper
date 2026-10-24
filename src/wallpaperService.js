@@ -4,6 +4,7 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {loadConfig, configForMonitor, targetMonitors} from './config.js';
@@ -36,6 +37,15 @@ export class WallpaperService {
         setDebug(this._config.debug);
         this._enabled = true;
 
+        try {
+            this._start();
+        } catch (e) {
+            this.disable();
+            throw e;
+        }
+    }
+
+    _start() {
         this._injectionManager = new InjectionManager();
 
         const overrides = new this._ShellOverrides(win => this._isRendererWindow(win), this._logger);
@@ -113,15 +123,16 @@ export class WallpaperService {
         this._signalIds.push([global.display,
             global.display.connect('notify::focus-window', () => this._scheduleStackCheck())]);
 
-        // Panel menus grab input through pushModal/popModal; lower() is a no-op
-        // while the grab is held, so the stack has to be fixed once it is gone.
+        // Menu grabs make lower() a no-op, so the stack has to be fixed once the
+        // menu is gone. Main itself is a module namespace and cannot be patched.
         const service = this;
-        for (const method of ['pushModal', 'popModal']) {
-            this._injectionManager.overrideMethod(Main, method, orig => function (...args) {
-                const result = orig.apply(Main, args);
-                service._scheduleStackCheck();
-                return result;
-            });
+        for (const method of ['open', 'close', 'toggle']) {
+            this._injectionManager.overrideMethod(PopupMenu.PopupMenu.prototype, method,
+                orig => function (...args) {
+                    const result = orig.apply(this, args);
+                    service._scheduleStackCheck();
+                    return result;
+                });
         }
     }
 

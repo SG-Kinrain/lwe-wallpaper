@@ -76,14 +76,26 @@ export class BackgroundCloner {
     // GNOME creates the background actor at 0x0 and resizes it later without
     // recreating it, so zero-sized actors must not be skipped.
     _onBackgroundActor(actor) {
+        if (!this._isDesktopBackground(actor))
+            return;
         this._actors.set(actor.monitor, actor);
-        this.detach(actor.monitor);
         this._attachClone(actor);
+    }
+
+    // Workspace thumbnails create their own backgrounds; touching them makes the
+    // shell rebuild the whole background group again and again.
+    _isDesktopBackground(actor) {
+        try {
+            return actor.get_parent() === Main.layoutManager._backgroundGroup;
+        } catch {
+            return false;
+        }
     }
 
     _attachClone(backgroundActor) {
         const monitorIndex = backgroundActor.monitor;
-        if (this._clones.has(monitorIndex))
+        const existing = this._clones.get(monitorIndex);
+        if (existing && existing.get_parent() === backgroundActor)
             return;
 
         const source = this._getSourceActor(monitorIndex);
