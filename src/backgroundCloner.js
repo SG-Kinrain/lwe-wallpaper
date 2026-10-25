@@ -99,25 +99,36 @@ export class BackgroundCloner {
 
     _attachClone(backgroundActor) {
         const monitorIndex = backgroundActor.monitor;
-        const existing = this._clones.get(monitorIndex);
-        if (existing && existing.get_parent() === backgroundActor)
-            return;
-
         const source = this._getSourceActor(monitorIndex);
         if (!source)
             return;
 
-        const wrapper = new St.Widget({
-            layout_manager: new Clutter.BinLayout(),
-            x_expand: true,
-            y_expand: true,
-        });
+        // GNOME 50 builds a replacement background actor and fades the old one
+        // out, so move the existing clone instead of adding a second one.
+        let wrapper = this._clones.get(monitorIndex);
+        if (wrapper) {
+            const parent = wrapper.get_parent();
+            if (parent === backgroundActor) {
+                this._setCloneSource(wrapper, source);
+                return;
+            }
+            parent?.remove_child(wrapper);
+        } else {
+            wrapper = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                x_expand: true,
+                y_expand: true,
+            });
+            wrapper.add_child(new Clutter.Clone({source}));
+            this._clones.set(monitorIndex, wrapper);
+        }
+
+        this._setCloneSource(wrapper, source);
+
         if (backgroundActor.width > 0 && backgroundActor.height > 0)
             wrapper.set_size(backgroundActor.width, backgroundActor.height);
 
-        wrapper.add_child(new Clutter.Clone({source}));
         backgroundActor.add_child(wrapper);
-        this._clones.set(monitorIndex, wrapper);
 
         const id = backgroundActor.connect('notify::allocation', () => {
             if (backgroundActor.width > 0 && backgroundActor.height > 0)
@@ -131,5 +142,11 @@ export class BackgroundCloner {
         this._logger.debug(`monitor=${monitorIndex} clone attached ` +
             `bg=${backgroundActor.width}x${backgroundActor.height} src=${src} ` +
             `children=${backgroundActor.get_n_children()}`);
+    }
+
+    _setCloneSource(wrapper, source) {
+        const clone = wrapper.get_first_child();
+        if (clone && clone.source !== source)
+            clone.set_source(source);
     }
 }

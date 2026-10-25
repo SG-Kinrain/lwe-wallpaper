@@ -128,8 +128,24 @@ export class WallpaperService {
         this._signalIds.push([global.window_manager,
             global.window_manager.connect_after('map',
                 (_wm, actor) => this._offerWindowToRenderers(actor.meta_window))]);
+        this._monitorLayout = this._monitorLayoutSignature();
         this._signalIds.push([Main.layoutManager,
-            Main.layoutManager.connect('monitors-changed', () => this._restart())]);
+            Main.layoutManager.connect('monitors-changed', () => {
+                const layout = this._monitorLayoutSignature();
+                if (layout === this._monitorLayout)
+                    return;
+                this._logger.debug(`monitor layout changed: ${layout}`);
+                this._monitorLayout = layout;
+                this._restart();
+            })]);
+    }
+
+    // Anything touching XRandR (Wine, games, VNC) can make mutter announce a
+    // change without the layout actually changing; restarting on that is churn.
+    _monitorLayoutSignature() {
+        return Main.layoutManager.monitors
+            .map(m => `${m.x},${m.y},${m.width},${m.height}`)
+            .join('|');
     }
 
     _createStackingGuard() {
