@@ -102,13 +102,27 @@ export class StackingGuard {
         }
     }
 
-    _ourActors() {
-        const actors = new Set();
+    // Windows in stacking order. mutter documents sort_windows_by_stacking as
+    // "from lowest to highest"; the actor list makes no such promise.
+    _stackedWindows() {
+        const ours = new Set();
         for (const renderer of this._renderers.values()) {
-            if (renderer.actor)
-                actors.add(renderer.actor);
+            if (renderer.window)
+                ours.add(renderer.window);
         }
-        return actors;
+
+        const activeWorkspace = global.workspace_manager.get_active_workspace();
+        const windows = [];
+        for (const actor of global.get_window_actors(false)) {
+            if (!actor.visible)
+                continue;
+            const win = actor.meta_window;
+            if (!win || win.minimized || !win.located_on_workspace(activeWorkspace))
+                continue;
+            windows.push(win);
+        }
+
+        return {ours, sorted: global.display.sort_windows_by_stacking(windows)};
     }
 
     // mutter restacks on focus, workspace switches and fullscreen exits, and the
@@ -117,27 +131,24 @@ export class StackingGuard {
         if (this._config?.keepAtBottom === false)
             return;
 
-        const actors = global.get_window_actors(false);
-        const ours = this._ourActors();
+        const {ours, sorted} = this._stackedWindows();
         if (ours.size === 0)
             return;
 
-        const indexes = [...ours].map(actor => actors.indexOf(actor)).filter(i => i >= 0);
+        const indexes = [];
+        sorted.forEach((win, i) => {
+            if (ours.has(win))
+                indexes.push(i);
+        });
         if (indexes.length === 0)
             return;
 
         const lowest = Math.min(...indexes);
-        const covered = actors.slice(0, lowest).some(actor => {
-            const win = actor.meta_window;
-            if (!win || win.is_skip_taskbar())
-                return false;
-            const id = `${win.get_app_id?.() ?? ''}${win.get_title?.() ?? ''}`.toLowerCase();
-            if (id.includes('wallpaperengine'))
-                return false;
-            return [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
-                    Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY]
-                .includes(win.get_window_type());
-        });
+        const covered = sorted.slice(0, lowest).some(win =>
+            !win.is_skip_taskbar() &&
+            [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG,
+             Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY]
+                .includes(win.get_window_type()));
 
         if (!covered) {
             this._lowerAttempts = 0;
@@ -161,8 +172,7 @@ export class StackingGuard {
     // composition, so the panel and dock would never be drawn. Unredirection is
     // refcounted; hold one reference while the renderer is that topmost window.
     _updateUnredirect() {
-        const actors = global.get_window_actors(false);
-        const ours = this._ourActors();
+        const {ours, sorted} = this._stackedWindows();
 
         // Scanout is decided per monitor view, so a window on one screen says
         // nothing about the other: find the topmost window on each monitor.
@@ -170,12 +180,8 @@ export class StackingGuard {
         const decided = new Array(monitors.length).fill(false);
         let inhibit = false;
 
-        for (let i = actors.length - 1; i >= 0 && !inhibit; i--) {
-            const actor = actors[i];
-            const win = actor.meta_window;
-            if (!win)
-                continue;
-
+        for (let i = sorted.length - 1; i >= 0 && !inhibit; i--) {
+            const win = sorted[i];
             const rect = win.get_frame_rect();
             for (let m = 0; m < monitors.length; m++) {
                 if (decided[m])
@@ -189,7 +195,7 @@ export class StackingGuard {
                     continue;
 
                 decided[m] = true;
-                if (ours.has(actor))
+                if (ours.has(win))
                     inhibit = true;
             }
         }
