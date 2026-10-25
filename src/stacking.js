@@ -25,6 +25,7 @@ export class StackingGuard {
         this._lastCheck = 0;
         this._lowerAttempts = 0;
         this._backoffUntil = 0;
+        this._lastDump = 0;
     }
 
     start() {
@@ -125,6 +126,37 @@ export class StackingGuard {
         return {ours, sorted: global.display.sort_windows_by_stacking(windows)};
     }
 
+    // Diagnostic: one line per coverage episode, throttled, so a report can be
+    // read back without a screenshot.
+    _dumpStack(tag, sorted, ours) {
+        const now = Date.now();
+        if (now - this._lastDump < 10000)
+            return;
+        this._lastDump = now;
+
+        const label = win => {
+            let appId = '';
+            try {
+                appId = win.get_gtk_application_id?.() || win.get_app_id?.() || '';
+            } catch (e) {
+                appId = '';
+            }
+            const rect = win.get_frame_rect();
+            const mark = ours.has(win) ? '*' : '';
+            const flags = [
+                win.is_fullscreen() ? 'fs' : '',
+                win.maximized_horizontally ? 'maxh' : '',
+                win.maximized_vertically ? 'maxv' : '',
+                win.is_above() ? 'above' : '',
+                win.minimized ? 'min' : '',
+            ].filter(f => f).join(',');
+            return `${mark}${appId || '?'}/t${win.get_window_type()}/L${win.get_layer()}` +
+                `/${rect.width}x${rect.height}+${rect.x}+${rect.y}${flags ? `[${flags}]` : ''}`;
+        };
+
+        this._logger.warn(`stack(${tag}) ${sorted.slice(-6).map(label).join(' > ')}`);
+    }
+
     // mutter restacks on focus, workspace switches and fullscreen exits, and the
     // renderer can end up above application windows, covering the whole screen.
     _enforceStacking() {
@@ -156,8 +188,22 @@ export class StackingGuard {
         }
 
         this._logger.debug('renderer stacked above an application window, lowering');
+        this._dumpStack('covered', sorted, ours);
+        const before = lowest;
         for (const renderer of this._renderers.values())
             renderer.window?.lower();
+
+        // A lower() that changes nothing means the criteria and mutter disagree,
+        // which the backoff below would hide.
+        const {ours: again, sorted: resorted} = this._stackedWindows();
+        const after = [];
+        resorted.forEach((win, i) => {
+            if (again.has(win))
+                after.push(i);
+        });
+        const afterLowest = after.length ? Math.min(...after) : -1;
+        if (afterLowest >= 0 && afterLowest >= before)
+            this._logger.warn(`lower had no effect (lowest ${before} to ${afterLowest})`);
 
         // If lowering keeps being needed the criteria or mutter disagree; stop
         // fighting the compositor instead of restacking in a loop.

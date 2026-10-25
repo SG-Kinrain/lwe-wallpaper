@@ -125,6 +125,11 @@ export class BackgroundCloner {
         });
         this._signalIds.push([backgroundActor, id]);
 
-        this._logger.debug(`monitor=${monitorIndex} clone attached`);
+        const win = source.meta_window;
+        const rect = win ? win.get_frame_rect() : null;
+        const src = rect ? `${rect.width}x${rect.height}+${rect.x}+${rect.y}` : 'no-window';
+        this._logger.debug(`monitor=${monitorIndex} clone attached ` +
+            `bg=${backgroundActor.width}x${backgroundActor.height} src=${src} ` +
+            `children=${backgroundActor.get_n_children()}`);
     }
 }
