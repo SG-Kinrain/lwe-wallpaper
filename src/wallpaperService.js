@@ -13,6 +13,11 @@ import {WakeGuard} from './wakeGuard.js';
 
 const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
+const RESTART_DEBOUNCE_MS = 300;
+const STOP_TIMEOUT_MS = 2000;
+const RELAUNCH_DELAY_MS = 1500;
+const MAX_RELAUNCHES = 3;
+const RELAUNCH_WINDOW_MS = 30000;
 
 export class WallpaperService {
     constructor({Renderer, ShellOverrides, BackgroundCloner, logger}) {
@@ -23,6 +28,15 @@ export class WallpaperService {
 
         this._injectionManager = null;
         this._renderers = new Map();
+        // Windows that belong to the engine even when no renderer adopted them.
+        // Orphans must stay out of the shell's window lists and off the scanout
+        // path, otherwise they cover the dock on their own.
+        this._engineWindows = new Set();
+        // Windows that existed before a restart: their engines are being killed,
+        // but until the window is gone a title match would bind it to a new
+        // renderer and leave the new engine's window unowned.
+        this._staleWindows = new Set();
+        this._lossCounts = new Map();
         this._cloner = null;
         this._config = null;
         this._signalIds = [];
@@ -31,6 +45,10 @@ export class WallpaperService {
         this._targets = [];
         this._failed = new Set();
         this._scanSourceId = 0;
+        this._restartId = 0;
+        this._generation = 0;
+        this._stopping = false;
+        this._restartPending = false;
         this._stacking = null;
         this._wakeGuard = null;
         this._enabled = false;
@@ -59,19 +77,31 @@ export class WallpaperService {
         this._connectShellSignals();
         this._createStackingGuard();
         this._createWakeGuard();
+        this._killStaleEngines();
         this._spawnRenderers();
 
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            if (this._enabled) {
+            if (!this._enabled)
+                return GLib.SOURCE_REMOVE;
+            // Seeding the actor map from the live background managers avoids the
+            // full teardown _updateBackgrounds() does at every enable.
+            if (!this._cloner?.hasActors)
                 this._cloner?.rebuild();
-                this._stacking?.schedule();
-            }
+            this._stacking?.schedule(true);
             return GLib.SOURCE_REMOVE;
         });
     }
 
     disable() {
         this._enabled = false;
+        this._generation++;
+
+        if (this._restartId) {
+            GLib.source_remove(this._restartId);
+            this._timeoutIds = this._timeoutIds.filter(id => id !== this._restartId);
+            this._restartId = 0;
+        }
+        this._cancelScan();
 
         for (const [obj, id] of this._signalIds) {
             try {
@@ -86,6 +116,8 @@ export class WallpaperService {
             GLib.source_remove(id);
         this._timeoutIds = [];
         this._scanSourceId = 0;
+        this._stopping = false;
+        this._restartPending = false;
 
         this._stacking?.stop();
         this._stacking = null;
@@ -96,6 +128,11 @@ export class WallpaperService {
         this._stopRenderers();
         this._cloner?.destroy();
         this._cloner = null;
+
+        this._engineWindows.clear();
+        this._staleWindows.clear();
+        this._lossCounts.clear();
+        this._failed.clear();
 
         this._injectionManager?.clear();
         this._injectionManager = null;
@@ -110,6 +147,10 @@ export class WallpaperService {
     }
 
     _isRendererWindow(win) {
+        if (!win)
+            return false;
+        if (this._engineWindows.has(win))
+            return true;
         for (const renderer of this._renderers.values()) {
             if (renderer.owns(win))
                 return true;
@@ -122,12 +163,14 @@ export class WallpaperService {
             monitorIndex => this._renderers.get(monitorIndex)?.actor ?? null,
             this._logger);
         this._cloner.install(this._injectionManager);
+        this._cloner.seed();
     }
 
     _connectShellSignals() {
         this._signalIds.push([global.window_manager,
             global.window_manager.connect_after('map',
                 (_wm, actor) => this._offerWindowToRenderers(actor.meta_window))]);
+
         this._monitorLayout = this._monitorLayoutSignature();
         this._signalIds.push([Main.layoutManager,
             Main.layoutManager.connect('monitors-changed', () => {
@@ -144,13 +187,14 @@ export class WallpaperService {
     // change without the layout actually changing; restarting on that is churn.
     _monitorLayoutSignature() {
         return Main.layoutManager.monitors
-            .map(m => `${m.x},${m.y},${m.width},${m.height}`)
+            .map(m => `${m.x},${m.y},${m.width},${m.height},${m.geometry_scale ?? m.scale ?? ''}`)
             .join('|');
     }
 
     _createStackingGuard() {
         this._stacking = new StackingGuard({
             renderers: this._renderers,
+            engineWindows: this._engineWindows,
             config: this._config,
             logger: this._logger,
             injectionManager: this._injectionManager,
@@ -167,9 +211,35 @@ export class WallpaperService {
         this._wakeGuard.start();
     }
 
-    _offerWindowToRenderers(win) {
-        if (!win || this._isAdopted(win))
+    // The engine is the only client whose window title is exactly this, so the
+    // title is a reliable fallback when owns_window() says no (GLFW opens its own
+    // Wayland connection). Matching is done once per window, never in the
+    // per-restack filters.
+    _registerEngineWindow(win) {
+        if (!win || this._engineWindows.has(win))
             return;
+
+        let title = '';
+        try {
+            title = `${win.get_title?.() ?? ''}`.toLowerCase();
+        } catch {
+            return;
+        }
+        if (!title.includes('wallpaperengine'))
+            return;
+
+        this._engineWindows.add(win);
+        this._signalIds.push([win, win.connect('unmanaged', () => {
+            this._engineWindows.delete(win);
+            this._staleWindows.delete(win);
+        })]);
+    }
+
+    _offerWindowToRenderers(win) {
+        if (!win || this._isAdopted(win) || this._staleWindows.has(win))
+            return;
+
+        this._registerEngineWindow(win);
 
         for (const renderer of this._renderers.values()) {
             if (renderer.isReady || !renderer.matches(win))
@@ -207,39 +277,52 @@ export class WallpaperService {
         }
 
         // A retry chain per renderer would duplicate work; keep a single one.
-        if (this._scanSourceId) {
-            GLib.source_remove(this._scanSourceId);
-            this._scanSourceId = 0;
-        }
+        this._cancelScan();
 
-        let sourceId = 0;
-        sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SCAN_INTERVAL_MS, () => {
-            if (this._scanSourceId === sourceId)
-                this._scanSourceId = 0;
-            this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
+        this._scanSourceId = this._addTimeout(SCAN_INTERVAL_MS, () => {
+            this._scanSourceId = 0;
             this._scanForRenderers(attempt + 1);
+        });
+    }
+
+    _cancelScan() {
+        if (!this._scanSourceId)
+            return;
+        GLib.source_remove(this._scanSourceId);
+        this._timeoutIds = this._timeoutIds.filter(id => id !== this._scanSourceId);
+        this._scanSourceId = 0;
+    }
+
+    _addTimeout(delayMs, callback) {
+        let sourceId = 0;
+        sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+            this._timeoutIds = this._timeoutIds.filter(id => id !== sourceId);
+            if (this._enabled)
+                callback();
             return GLib.SOURCE_REMOVE;
         });
-        this._scanSourceId = sourceId;
         this._timeoutIds.push(sourceId);
+        return sourceId;
     }
 
     // A previous session can leave engines behind (crash, failed enable) and their
-    // windows then sit unowned in the stack.
+    // windows then sit unowned in the stack. Wait for pkill so it cannot race the
+    // engines this instance is about to start.
     _killStaleEngines() {
         if (!this._config.engine)
             return;
         try {
-            Gio.Subprocess.new(['pkill', '-f', `${this._config.engine} --window`],
+            const process = Gio.Subprocess.new(['pkill', '-f', `${this._config.engine} --window`],
                 Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE);
+            process.wait(null);
         } catch (e) {
             this._logger.debug(`stale engine cleanup failed: ${e.message ?? e}`);
         }
     }
 
     _spawnRenderers() {
-        this._killStaleEngines();
         this._failed = new Set();
+        this._lossCounts.clear();
         this._monitors = Main.layoutManager.monitors;
         this._targets = targetMonitors(this._config, this._monitors.length)
             .filter(index => this._monitors[index]);
@@ -266,12 +349,64 @@ export class WallpaperService {
                 this._cloner?.attach(r.monitorIndex);
                 this._startNextRenderer();
             },
-            onLost: r => this._cloner?.detach(r.monitorIndex),
+            onLost: r => this._onRendererLost(r),
         });
 
         this._renderers.set(monitorIndex, renderer);
-        renderer.start();
+
+        // An engine window from the previous instance may still be alive while its
+        // process is being reaped; the fresh renderer must not adopt it.
+        for (const win of this._engineWindows) {
+            try {
+                if (!win.minimized)
+                    this._staleWindows.add(win);
+            } catch {
+                // window already gone
+            }
+        }
+
+        if (!renderer.start()) {
+            // A broken engine path must not block the remaining monitors.
+            this._renderers.delete(monitorIndex);
+            this._failed.add(monitorIndex);
+            this._startNextRenderer();
+            return;
+        }
         this._scanForRenderers(0);
+    }
+
+    // Engines die with their process (crash, driver reset); without a relaunch the
+    // monitor keeps a blank background forever.
+    _onRendererLost(renderer) {
+        const monitorIndex = renderer.monitorIndex;
+
+        // Ownership first: a renderer that the service already replaced must not
+        // detach the clone of its successor.
+        if (this._renderers.get(monitorIndex) !== renderer)
+            return;
+
+        this._renderers.delete(monitorIndex);
+        renderer.stop();
+        this._cloner?.detach(monitorIndex);
+
+        const now = Date.now();
+        const entry = this._lossCounts.get(monitorIndex) ?? {count: 0, since: now};
+        if (now - entry.since > RELAUNCH_WINDOW_MS) {
+            entry.count = 0;
+            entry.since = now;
+        }
+        entry.count++;
+        this._lossCounts.set(monitorIndex, entry);
+
+        if (entry.count > MAX_RELAUNCHES) {
+            this._logger.warn(`monitor=${monitorIndex} engine keeps disappearing, giving up`);
+            this._failed.add(monitorIndex);
+            this._lossCounts.delete(monitorIndex);
+            return;
+        }
+
+        this._logger.debug(`monitor=${monitorIndex} engine lost, relaunching`);
+        this._addTimeout(RELAUNCH_DELAY_MS, () => this._startNextRenderer());
     }
 
     // A stalled engine keeps its window, so the monitor needs a fresh one; the
@@ -287,22 +422,105 @@ export class WallpaperService {
         this._startNextRenderer();
     }
 
-    _stopRenderers() {
-        for (const renderer of this._renderers.values())
-            renderer.stop();
+    // The old engines have to be gone before new ones start: their windows still
+    // carry the engine title, and a new renderer that adopts one of them ends up
+    // cloning a window that is about to be destroyed.
+    _stopRenderers(onStopped = null) {
+        const renderers = [...this._renderers.values()];
         this._renderers.clear();
+
+        if (renderers.length === 0) {
+            onStopped?.();
+            return;
+        }
+
+        let remaining = renderers.length;
+        let settled = false;
+        let timeoutId = 0;
+
+        const finish = () => {
+            if (settled)
+                return;
+            settled = true;
+            if (timeoutId) {
+                GLib.source_remove(timeoutId);
+                this._timeoutIds = this._timeoutIds.filter(id => id !== timeoutId);
+                timeoutId = 0;
+            }
+            onStopped?.();
+        };
+
+        timeoutId = this._addTimeout(STOP_TIMEOUT_MS, finish);
+        for (const renderer of renderers) {
+            renderer.stop(() => {
+                if (--remaining === 0)
+                    finish();
+            });
+        }
     }
 
     _restart() {
         if (!this._enabled)
             return;
 
-        this._logger.debug('monitors changed, restarting renderers');
-        // Reuse the cloner: its background hook is installed once per enable, and
-        // installing it again would wrap the previous override and clone twice.
-        this._cloner?.destroy();
-        this._stopRenderers();
-        this._spawnRenderers();
-        this._cloner?.rebuild();
+        // A plug/unplug cycle emits monitors-changed several times; restart once.
+        if (this._restartId) {
+            GLib.source_remove(this._restartId);
+            this._timeoutIds = this._timeoutIds.filter(id => id !== this._restartId);
+        }
+        this._restartId = this._addTimeout(RESTART_DEBOUNCE_MS, () => {
+            this._restartId = 0;
+            this._restartNow();
+        });
+    }
+
+    _restartNow() {
+        if (!this._enabled)
+            return;
+
+        // A newer monitors-changed arrived while the old engines were still
+        // dying; run once more when the stop has finished instead of spawning
+        // into a stack that still holds the previous generation's windows.
+        if (this._stopping) {
+            this._restartPending = true;
+            return;
+        }
+
+        const generation = ++this._generation;
+        this._logger.debug(`monitors changed (${Main.layoutManager.monitors.length}), restarting`);
+
+        this._cancelScan();
+        this._rememberStaleWindows();
+
+        // GNOME 50 rebuilds every background actor before it emits monitors-changed,
+        // so the actor map already points at the new ones: only the clones that
+        // referenced the killed engines have to go.
+        this._cloner?.detachAll();
+
+        this._stopping = true;
+        this._stopRenderers(() => {
+            this._stopping = false;
+
+            if (this._restartPending) {
+                this._restartPending = false;
+                this._restartNow();
+                return;
+            }
+
+            if (!this._enabled || generation !== this._generation)
+                return;
+
+            this._spawnRenderers();
+            this._stacking?.schedule(true);
+        });
+    }
+
+    _rememberStaleWindows() {
+        this._staleWindows.clear();
+        for (const actor of global.get_window_actors(false)) {
+            const win = actor.meta_window;
+            if (win)
+                this._staleWindows.add(win);
+        }
     }
 }

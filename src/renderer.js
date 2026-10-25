@@ -23,11 +23,17 @@ export class Renderer {
         this._actor = null;
         this._signalIds = [];
         this._timeoutIds = [];
+        this._exitCallbacks = [];
+        this._exited = true;
         this._stopped = false;
     }
 
     get monitorIndex() {
         return this._monitorIndex;
+    }
+
+    get monitor() {
+        return this._monitor;
     }
 
     get actor() {
@@ -62,17 +68,25 @@ export class Renderer {
             return false;
         }
 
+        this._exited = false;
         this._logger.debug(`monitor=${this._monitorIndex} engine pid=${this._readPid(this._process)}`);
 
-        this._process.wait_async(null, () => {
-            if (!this._stopped)
-                this._notifyLost();
+        const process = this._process;
+        process.wait_async(null, (proc, res) => {
+            try {
+                proc.wait_finish(res);
+            } catch {
+                // cancelled or already reaped
+            }
+            this._onProcessExited();
         });
 
         return true;
     }
 
-    stop() {
+    // The service waits for this before it starts the replacement engine: a live
+    // window is matched by title no matter which process owns it.
+    stop(onStopped = null) {
         this._stopped = true;
 
         for (const [obj, id] of this._signalIds) {
@@ -88,6 +102,13 @@ export class Renderer {
             GLib.source_remove(id);
         this._timeoutIds = [];
 
+        if (typeof onStopped === 'function') {
+            if (this._exited || !this._process)
+                onStopped();
+            else
+                this._exitCallbacks.push(onStopped);
+        }
+
         if (this._process) {
             try {
                 this._process.force_exit();
@@ -96,7 +117,6 @@ export class Renderer {
             }
         }
 
-        this._process = null;
         this._client = null;
         this._window = null;
         this._actor = null;
@@ -153,7 +173,9 @@ export class Renderer {
             this._notifyLost();
         })]);
 
-        this._logger.debug(`monitor=${this._monitorIndex} window adopted`);
+        const rect = win.get_frame_rect();
+        this._logger.debug(`monitor=${this._monitorIndex} window adopted ` +
+            `at ${rect.x},${rect.y} ${rect.width}x${rect.height}`);
         this._onReady(this);
         return true;
     }
@@ -166,24 +188,28 @@ export class Renderer {
             flags: Gio.SubprocessFlags.STDOUT_SILENCE,
         });
 
-        // GNOME 49 replaced spawnv() with new_subprocess(), which creates the
-        // client and starts the process in one call.
+        // Meta 18 (GNOME 50) dropped spawnv(); new() alone cannot start a process,
+        // so new_subprocess() is the only way in. 48 and older only have the old
+        // pair, so probe instead of comparing versions and never call a method that
+        // does not exist.
         if (typeof Meta.WaylandClient.new_subprocess === 'function') {
-            try {
-                this._client = Meta.WaylandClient.new_subprocess(global.context, launcher, argv);
-                const process = this._client.get_subprocess?.();
-                if (process)
-                    return process;
-            } catch (e) {
-                this._logger.warn(`new_subprocess failed: ${e.message ?? e}`);
-            }
+            this._client = Meta.WaylandClient.new_subprocess(global.context, launcher, argv);
+            const process = this._client.get_subprocess?.();
+            if (!process)
+                throw new Error('new_subprocess returned no subprocess');
+            return process;
         }
 
-        this._client = Meta.WaylandClient.new(global.context, launcher);
-        const process = this._client.spawnv(global.display, argv);
-        if (launcher.close)
-            launcher.close();
-        return process;
+        if (typeof Meta.WaylandClient.new === 'function' &&
+            typeof Meta.WaylandClient.spawnv === 'function') {
+            this._client = Meta.WaylandClient.new(global.context, launcher);
+            const process = this._client.spawnv(global.display, argv);
+            if (launcher.close)
+                launcher.close();
+            return process;
+        }
+
+        throw new Error('Meta.WaylandClient has no usable spawn method');
     }
 
     _readPid(process) {
@@ -193,6 +219,25 @@ export class Renderer {
         } catch {
             return 0;
         }
+    }
+
+    _onProcessExited() {
+        if (this._exited)
+            return;
+        this._exited = true;
+
+        const callbacks = this._exitCallbacks;
+        this._exitCallbacks = [];
+        for (const callback of callbacks) {
+            try {
+                callback();
+            } catch (e) {
+                this._logger.warn(`exit callback failed: ${e.message ?? e}`);
+            }
+        }
+
+        if (!this._stopped)
+            this._notifyLost();
     }
 
     _watchState(win) {

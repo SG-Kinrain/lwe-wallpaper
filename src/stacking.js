@@ -13,8 +13,9 @@ const LOWER_BACKOFF_MS = 30000;
 // Keeps the renderer windows out of the way: below application windows, and off
 // the compositor's direct scanout path so the shell keeps drawing its own chrome.
 export class StackingGuard {
-    constructor({renderers, config, logger, injectionManager}) {
+    constructor({renderers, engineWindows, config, logger, injectionManager}) {
         this._renderers = renderers;
+        this._engineWindows = engineWindows ?? new Set();
         this._config = config;
         this._logger = logger;
         this._injectionManager = injectionManager;
@@ -53,14 +54,14 @@ export class StackingGuard {
         }
     }
 
-    schedule() {
+    schedule(force = false) {
         if (!this._active || this._idleId)
             return;
 
         // restacked arrives in bursts (and lower() itself restacks), so collapse
         // them: one check per interval is enough to keep the stack right.
         const now = Date.now();
-        if (now < this._backoffUntil || now - this._lastCheck < CHECK_INTERVAL_MS)
+        if (!force && (now < this._backoffUntil || now - this._lastCheck < CHECK_INTERVAL_MS))
             return;
         this._lastCheck = now;
 
@@ -111,6 +112,17 @@ export class StackingGuard {
             if (renderer.window)
                 ours.add(renderer.window);
         }
+        // An engine window that no renderer adopted (leftover from a restart) still
+        // has to count as ours: it is monitor-sized, so if it ends up on top the
+        // compositor hands the screen to scanout and no chrome is drawn at all.
+        for (const win of this._engineWindows) {
+            try {
+                if (!win.minimized)
+                    ours.add(win);
+            } catch {
+                // window already gone
+            }
+        }
 
         const activeWorkspace = global.workspace_manager.get_active_workspace();
         const windows = [];
@@ -154,7 +166,7 @@ export class StackingGuard {
                 `/${rect.width}x${rect.height}+${rect.x}+${rect.y}${flags ? `[${flags}]` : ''}`;
         };
 
-        this._logger.warn(`stack(${tag}) ${sorted.slice(-6).map(label).join(' > ')}`);
+        this._logger.debug(`stack(${tag}) ${sorted.slice(-6).map(label).join(' > ')}`);
     }
 
     // mutter restacks on focus, workspace switches and fullscreen exits, and the
@@ -190,8 +202,15 @@ export class StackingGuard {
         this._logger.debug('renderer stacked above an application window, lowering');
         this._dumpStack('covered', sorted, ours);
         const before = lowest;
-        for (const renderer of this._renderers.values())
-            renderer.window?.lower();
+        for (const win of sorted) {
+            if (!ours.has(win))
+                continue;
+            try {
+                win.lower();
+            } catch {
+                // window disappeared between the check and the fix
+            }
+        }
 
         // A lower() that changes nothing means the criteria and mutter disagree,
         // which the backoff below would hide.

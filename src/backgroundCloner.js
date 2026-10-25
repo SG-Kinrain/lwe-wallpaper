@@ -12,7 +12,8 @@ export class BackgroundCloner {
         this._logger = logger;
         this._actors = new Map();
         this._clones = new Map();
-        this._signalIds = [];
+        // monitorIndex -> [backgroundActor, allocation signal id]
+        this._allocationSignals = new Map();
     }
 
     install(injectionManager) {
@@ -32,9 +33,30 @@ export class BackgroundCloner {
         );
     }
 
+    get hasActors() {
+        return this._actors.size > 0;
+    }
+
+    // The shell already has one background actor per monitor when the extension is
+    // enabled; registering those avoids the teardown (and visible flash) that
+    // _updateBackgrounds() would cause.
+    seed() {
+        const managers = Main.layoutManager._bgManagers ?? [];
+        for (const manager of managers) {
+            const actor = manager.backgroundActor;
+            if (actor)
+                this._onBackgroundActor(actor);
+        }
+        return this._actors.size > 0;
+    }
+
     rebuild() {
         try {
-            Main.layoutManager._updateBackgrounds();
+            // GNOME 50 made _updateBackgrounds() async. Its rejection has to be
+            // handled here or a cancelled background load shows up as an unhandled
+            // promise rejection in the shell log.
+            const pending = Main.layoutManager._updateBackgrounds();
+            pending?.catch?.(e => this._logger.debug(`background rebuild failed: ${e.message ?? e}`));
         } catch (e) {
             this._logger.warn(`background rebuild failed: ${e.message ?? e}`);
         }
@@ -47,6 +69,8 @@ export class BackgroundCloner {
     }
 
     detach(monitorIndex) {
+        this._clearAllocationSignal(monitorIndex);
+
         const wrapper = this._clones.get(monitorIndex);
         if (!wrapper)
             return;
@@ -58,18 +82,20 @@ export class BackgroundCloner {
         }
     }
 
-    destroy() {
+    // Keep the background actor map: after a monitor change GNOME has already
+    // replaced the actors, so only the clones that point at killed engines are
+    // stale.
+    detachAll() {
         for (const monitorIndex of [...this._clones.keys()])
             this.detach(monitorIndex);
+    }
 
-        for (const [actor, id] of this._signalIds) {
-            try {
-                actor.disconnect(id);
-            } catch {
-                // actor already destroyed
-            }
-        }
-        this._signalIds = [];
+    destroy() {
+        this.detachAll();
+
+        for (const monitorIndex of [...this._allocationSignals.keys()])
+            this._clearAllocationSignal(monitorIndex);
+
         this._actors.clear();
     }
 
@@ -107,13 +133,28 @@ export class BackgroundCloner {
         // out, so move the existing clone instead of adding a second one.
         let wrapper = this._clones.get(monitorIndex);
         if (wrapper) {
-            const parent = wrapper.get_parent();
-            if (parent === backgroundActor) {
+            let parent = null;
+            try {
+                parent = wrapper.get_parent();
+            } catch {
+                // the wrapper died together with its background actor
+                wrapper = null;
+            }
+
+            if (wrapper && parent === backgroundActor) {
                 this._setCloneSource(wrapper, source);
                 return;
             }
-            parent?.remove_child(wrapper);
-        } else {
+            if (wrapper && parent) {
+                try {
+                    parent.remove_child(wrapper);
+                } catch {
+                    wrapper = null;
+                }
+            }
+        }
+
+        if (!wrapper) {
             wrapper = new St.Widget({
                 layout_manager: new Clutter.BinLayout(),
                 x_expand: true,
@@ -129,12 +170,7 @@ export class BackgroundCloner {
             wrapper.set_size(backgroundActor.width, backgroundActor.height);
 
         backgroundActor.add_child(wrapper);
-
-        const id = backgroundActor.connect('notify::allocation', () => {
-            if (backgroundActor.width > 0 && backgroundActor.height > 0)
-                wrapper.set_size(backgroundActor.width, backgroundActor.height);
-        });
-        this._signalIds.push([backgroundActor, id]);
+        this._watchAllocation(monitorIndex, backgroundActor, wrapper);
 
         const win = source.meta_window;
         const rect = win ? win.get_frame_rect() : null;
@@ -145,8 +181,40 @@ export class BackgroundCloner {
     }
 
     _setCloneSource(wrapper, source) {
-        const clone = wrapper.get_first_child();
-        if (clone && clone.source !== source)
-            clone.set_source(source);
+        try {
+            const clone = wrapper.get_first_child();
+            if (clone && clone.source !== source)
+                clone.set_source(source);
+        } catch (e) {
+            this._logger.debug(`clone source update failed: ${e.message ?? e}`);
+        }
+    }
+
+    // One handler per monitor: reusing the wrapper must not stack a new
+    // notify::allocation on every background rebuild.
+    _watchAllocation(monitorIndex, backgroundActor, wrapper) {
+        this._clearAllocationSignal(monitorIndex);
+
+        const id = backgroundActor.connect('notify::allocation', () => {
+            try {
+                if (backgroundActor.width > 0 && backgroundActor.height > 0)
+                    wrapper.set_size(backgroundActor.width, backgroundActor.height);
+            } catch {
+                // actor or wrapper already destroyed
+            }
+        });
+        this._allocationSignals.set(monitorIndex, [backgroundActor, id]);
+    }
+
+    _clearAllocationSignal(monitorIndex) {
+        const entry = this._allocationSignals.get(monitorIndex);
+        if (!entry)
+            return;
+        this._allocationSignals.delete(monitorIndex);
+        try {
+            entry[0].disconnect(entry[1]);
+        } catch {
+            // actor already destroyed
+        }
     }
 }
