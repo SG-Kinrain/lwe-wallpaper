@@ -9,6 +9,7 @@ import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension
 import {loadConfig, configForMonitor, targetMonitors} from './config.js';
 import {setDebug} from './logger.js';
 import {StackingGuard} from './stacking.js';
+import {WakeGuard} from './wakeGuard.js';
 
 const SCAN_INTERVAL_MS = 500;
 const SCAN_ATTEMPTS = 20;
@@ -31,6 +32,7 @@ export class WallpaperService {
         this._failed = new Set();
         this._scanSourceId = 0;
         this._stacking = null;
+        this._wakeGuard = null;
         this._enabled = false;
     }
 
@@ -56,6 +58,7 @@ export class WallpaperService {
         this._createCloner();
         this._connectShellSignals();
         this._createStackingGuard();
+        this._createWakeGuard();
         this._spawnRenderers();
 
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -86,6 +89,9 @@ export class WallpaperService {
 
         this._stacking?.stop();
         this._stacking = null;
+
+        this._wakeGuard?.stop();
+        this._wakeGuard = null;
 
         this._stopRenderers();
         this._cloner?.destroy();
@@ -134,6 +140,15 @@ export class WallpaperService {
             injectionManager: this._injectionManager,
         });
         this._stacking.start();
+    }
+
+    _createWakeGuard() {
+        this._wakeGuard = new WakeGuard({
+            renderers: this._renderers,
+            logger: this._logger,
+            onStalled: monitorIndex => this._restartRenderer(monitorIndex),
+        });
+        this._wakeGuard.start();
     }
 
     _offerWindowToRenderers(win) {
@@ -241,6 +256,19 @@ export class WallpaperService {
         this._renderers.set(monitorIndex, renderer);
         renderer.start();
         this._scanForRenderers(0);
+    }
+
+    // A stalled engine keeps its window, so the monitor needs a fresh one; the
+    // clone follows through onLost/onReady.
+    _restartRenderer(monitorIndex) {
+        const renderer = this._renderers.get(monitorIndex);
+        if (!renderer)
+            return;
+
+        this._renderers.delete(monitorIndex);
+        this._cloner?.detach(monitorIndex);
+        renderer.stop();
+        this._startNextRenderer();
     }
 
     _stopRenderers() {

@@ -42,6 +42,10 @@ export class Renderer {
         return this._window !== null;
     }
 
+    get pid() {
+        return this._process ? this._readPid(this._process) : 0;
+    }
+
     start() {
         if (!isEngineAvailable(this._config.engine)) {
             this._logger.error(`renderer not found: ${this._config.engine}`);
