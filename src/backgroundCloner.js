@@ -12,6 +12,10 @@ export class BackgroundCloner {
         this._logger = logger;
         this._actors = new Map();
         this._clones = new Map();
+        // monitorIndex -> the background actor that currently parents the wrapper.
+        // When that actor is destroyed the wrapper goes with it and must not be
+        // handed to the replacement actor.
+        this._cloneOwners = new Map();
         // monitorIndex -> [backgroundActor, allocation signal id]
         this._allocationSignals = new Map();
     }
@@ -70,6 +74,7 @@ export class BackgroundCloner {
 
     detach(monitorIndex) {
         this._clearAllocationSignal(monitorIndex);
+        this._cloneOwners.delete(monitorIndex);
 
         const wrapper = this._clones.get(monitorIndex);
         if (!wrapper)
@@ -97,6 +102,7 @@ export class BackgroundCloner {
             this._clearAllocationSignal(monitorIndex);
 
         this._actors.clear();
+        this._cloneOwners.clear();
     }
 
     // GNOME creates the background actor at 0x0 and resizes it later without
@@ -106,11 +112,26 @@ export class BackgroundCloner {
             return;
 
         this._actors.set(actor.monitor, actor);
-        actor.connect('destroy', () => {
-            if (this._actors.get(actor.monitor) === actor)
-                this._actors.delete(actor.monitor);
-        });
+        actor.connect('destroy', () => this._forgetBackgroundActor(actor));
         this._attachClone(actor);
+    }
+
+    // The wrapper is a child of the background actor, so it is destroyed together
+    // with it. Dropping the references here is what keeps _attachClone from using
+    // a disposed widget when GNOME swaps the actor after a monitor change.
+    _forgetBackgroundActor(actor) {
+        const monitorIndex = actor.monitor;
+        if (this._actors.get(monitorIndex) === actor)
+            this._actors.delete(monitorIndex);
+
+        // Only the actor that still owns the wrapper invalidates it; an old actor
+        // fading out after a swap no longer does.
+        if (this._cloneOwners.get(monitorIndex) !== actor)
+            return;
+
+        this._cloneOwners.delete(monitorIndex);
+        this._clones.delete(monitorIndex);
+        this._clearAllocationSignal(monitorIndex);
     }
 
     // Workspace thumbnails create their own backgrounds; touching them makes the
@@ -134,23 +155,34 @@ export class BackgroundCloner {
         let wrapper = this._clones.get(monitorIndex);
         if (wrapper) {
             let parent = null;
+            let alive = false;
             try {
                 parent = wrapper.get_parent();
+                // A disposed actor still answers get_parent(); the clone is the
+                // wrapper's only child, so use it as the liveness check.
+                alive = Boolean(wrapper.get_first_child());
             } catch {
-                // the wrapper died together with its background actor
-                wrapper = null;
+                alive = false;
             }
 
-            if (wrapper && parent === backgroundActor) {
+            if (alive && parent === backgroundActor) {
                 this._setCloneSource(wrapper, source);
+                this._cloneOwners.set(monitorIndex, backgroundActor);
                 return;
             }
-            if (wrapper && parent) {
+
+            if (alive && parent) {
                 try {
                     parent.remove_child(wrapper);
                 } catch {
-                    wrapper = null;
+                    alive = false;
                 }
+            }
+
+            if (!alive) {
+                this._clones.delete(monitorIndex);
+                this._cloneOwners.delete(monitorIndex);
+                wrapper = null;
             }
         }
 
@@ -170,6 +202,7 @@ export class BackgroundCloner {
             wrapper.set_size(backgroundActor.width, backgroundActor.height);
 
         backgroundActor.add_child(wrapper);
+        this._cloneOwners.set(monitorIndex, backgroundActor);
         this._watchAllocation(monitorIndex, backgroundActor, wrapper);
 
         const win = source.meta_window;
