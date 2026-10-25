@@ -2,6 +2,7 @@
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -72,6 +73,7 @@ export class WallpaperService {
 
         const overrides = new this._ShellOverrides(win => this._isRendererWindow(win), this._logger);
         overrides.install(this._injectionManager);
+        this._overrides = overrides;
 
         this._createCloner();
         this._connectShellSignals();
@@ -233,6 +235,29 @@ export class WallpaperService {
             this._engineWindows.delete(win);
             this._staleWindows.delete(win);
         })]);
+
+        // The engine maps a full-screen window before any renderer adopts it. Until
+        // it has been moved to its monitor and lowered it is a misplaced copy of
+        // the wallpaper on top of the desktop, so keep the actor invisible.
+        try {
+            const actor = win.get_compositor_private?.();
+            if (actor)
+                actor.opacity = 0;
+        } catch {
+            // window already gone
+        }
+
+        // The dash associates the window with an app before our filters apply, so
+        // it may already show an "unknown application" icon. Ask it to rebuild now
+        // instead of waiting for the next app event.
+        const app = this._overrides?.getWindowApp(win);
+        if (app) {
+            try {
+                Shell.AppSystem.get_default().emit('app-state-changed', app);
+            } catch (e) {
+                this._logger.debug(`app-state refresh failed: ${e.message ?? e}`);
+            }
+        }
     }
 
     _offerWindowToRenderers(win) {

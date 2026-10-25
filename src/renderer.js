@@ -167,6 +167,14 @@ export class Renderer {
         this._keepAtBottom(win);
         this._watchState(win);
 
+        // It is in place now; hiding it until this point kept the pre-adoption
+        // window from showing as a stray wallpaper.
+        try {
+            actor.opacity = 255;
+        } catch {
+            // actor already gone
+        }
+
         this._signalIds.push([actor, actor.connect('destroy', () => {
             this._window = null;
             this._actor = null;

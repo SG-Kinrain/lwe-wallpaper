@@ -10,6 +10,7 @@ export class ShellOverrides {
     constructor(isRenderer, logger) {
         this._isRenderer = isRenderer;
         this._logger = logger;
+        this._originalGetWindowApp = null;
     }
 
     install(injectionManager) {
@@ -43,8 +44,11 @@ export class ShellOverrides {
         }
 
         injectionManager.overrideMethod(Shell.WindowTracker.prototype, 'get_window_app',
-            orig => function (win) {
-                return isRenderer(win) ? null : orig.apply(this, [win]);
+            orig => {
+                self._originalGetWindowApp = orig;
+                return function (win) {
+                    return isRenderer(win) ? null : orig.apply(this, [win]);
+                };
             });
 
         injectionManager.overrideMethod(Shell.App.prototype, 'get_windows',
@@ -70,6 +74,18 @@ export class ShellOverrides {
             return app.get_windows().length;
         } catch {
             return 0;
+        }
+    }
+
+    // The app association exists before the window is filtered, so the dash may
+    // already have drawn an icon for it; the caller uses this to ask the tracker
+    // for the app and nudge the dash to rebuild.
+    getWindowApp(win) {
+        try {
+            return this._originalGetWindowApp?.call(
+                Shell.WindowTracker.get_default(), win) ?? null;
+        } catch {
+            return null;
         }
     }
 }
